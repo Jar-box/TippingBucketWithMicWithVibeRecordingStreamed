@@ -42,7 +42,9 @@ CAMERA_ENABLED = True  # Set to False to disable camera if troubleshooting
 CAMERA_TIMEOUT = 5  # Seconds to wait for camera connection
 CAMERA_RECONNECT_INTERVAL = 10  # Seconds between reconnection attempts
 CAMERA_ROTATION = 90  # Rotation in degrees: 0, 90, 180, or 270
-CAMERA_FPS_LIMIT = 10  # Max FPS for camera (lower = less CPU usage, smoother performance)
+CAMERA_FPS_LIMIT = (
+    10  # Max FPS for camera (lower = less CPU usage, smoother performance)
+)
 
 # ======== CONFIG ========
 WINDOW_SECONDS = 30  # Plot window length (seconds)
@@ -178,7 +180,7 @@ class CameraThread:
             if ret:
                 # Convert BGR to RGB for matplotlib
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                
+
                 # Rotate frame if needed
                 if CAMERA_ROTATION == 90:
                     frame_rgb = cv2.rotate(frame_rgb, cv2.ROTATE_90_CLOCKWISE)
