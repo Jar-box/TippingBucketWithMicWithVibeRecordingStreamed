@@ -3,9 +3,11 @@ import struct
 
 import csv
 import math
+import os
 import time
 from collections import deque
 from datetime import datetime
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
@@ -63,10 +65,17 @@ sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
 
 
 # ======== OUTPUT FILE ========
-stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-OUTPUT_CSV = f"rain_intensity_{stamp}.csv"
-OUTPUT_PNG = f"rain_intensity_{stamp}.png"
-OUTPUT_HTML = f"rain_intensity_{stamp}.html"
+now = datetime.now()
+stamp = now.strftime("%Y%m%d_%H%M%S")
+date_folder = now.strftime("%Y-%m-%d")
+
+# Create organized folder structure: data/YYYY-MM-DD/
+output_dir = Path("data") / date_folder
+output_dir.mkdir(parents=True, exist_ok=True)
+
+OUTPUT_CSV = output_dir / f"rain_intensity_{stamp}.csv"
+OUTPUT_PNG = output_dir / f"rain_intensity_{stamp}.png"
+OUTPUT_HTML = output_dir / f"rain_intensity_{stamp}.html"
 
 # ======== STATE ========
 # Live display series (pruned to 30s window)
