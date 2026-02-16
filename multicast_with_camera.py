@@ -12,6 +12,7 @@ import threading
 
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+from matplotlib.collections import LineCollection
 import plotly.graph_objects as go
 import cv2
 import numpy as np
@@ -60,8 +61,10 @@ SMOOTHING_FACTOR = 0.05  # Exponential smoothing alpha (0=max smoothing, 1=no sm
 # 0.15 allows gradual rain accumulation while filtering transient noise
 
 # === PERFORMANCE OPTIMIZATIONS ===
-UPDATE_EVERY_N_SAMPLES = 30  # Only update plot every N samples (reduces CPU/GPU load)
 FIGURE_SIZE = (16, 7)  # Wider figure to accommodate camera and graph side-by-side
+PLOT_FPS = 8  # Plot refresh rate (Hz). Lower = smoother, less CPU
+CAMERA_DISPLAY_FPS = 12  # Camera refresh rate (Hz)
+CAMERA_DISPLAY_WIDTH = 640  # Downscale for display to reduce rendering cost
 
 # === ZOOM LIMITS ===
 MIN_TIME_ZOOM = 30.0  # Minimum x-axis range in seconds
@@ -126,7 +129,6 @@ previous_tip_count = 0
 mic_suppressed_until = 0.0  # Timestamp when mic suppression ends
 mic_history = deque(maxlen=10)  # dB history
 mic_amp_history = deque(maxlen=10)  # amplitude history
-sample_counter = 0  # Performance: count samples between plot updates
 
 # Exponentially smoothed values (initialized to zero, will converge over first few samples)
 smoothed_mic_amp = 0.0
@@ -369,8 +371,14 @@ with open(OUTPUT_CSV, "w", newline="") as f:
     start_ts = time.time()
     last_reset_time = start_ts
 
-    tip_lines_amp = []
+    tip_line_collection = LineCollection(
+        [], colors="red", linewidths=1.5, linestyles="--", alpha=0.4
+    )
+    ax_amp.add_collection(tip_line_collection)
     is_closed = False
+
+    last_plot_update = 0.0
+    last_camera_update = 0.0
 
     def on_close(event):
         global is_closed
@@ -516,10 +524,11 @@ with open(OUTPUT_CSV, "w", newline="") as f:
             )
             f.flush()
 
-            # === PERFORMANCE OPTIMIZATION: Throttle plot updates ===
-            sample_counter += 1
-            if sample_counter % UPDATE_EVERY_N_SAMPLES != 0:
+            # === PERFORMANCE OPTIMIZATION: time-based plot refresh ===
+            now_update_ts = time.time()
+            if now_update_ts - last_plot_update < (1.0 / PLOT_FPS):
                 continue  # Skip plot update to reduce CPU/GPU load
+            last_plot_update = now_update_ts
 
             # Update plot (only every N samples)
             if not series_t:
@@ -527,41 +536,36 @@ with open(OUTPUT_CSV, "w", newline="") as f:
 
             t_rel = [t - start_ts for t in series_t]
 
-            line_mic_amp_raw.set_data(t_rel, list(series_mic_amp_raw))
-            line_mic_amp_smooth.set_data(t_rel, list(series_mic_amp_filtered))
-
-            # Remove old tip lines and redraw for current window
-            for ln in tip_lines_amp:
-                ln.remove()
-            tip_lines_amp.clear()
-
-            for tip_ts in tip_times:
-                x = tip_ts - start_ts
-                tip_lines_amp.append(
-                    ax_amp.axvline(
-                        x=x, color="red", alpha=0.4, linewidth=1.5, linestyle="--"
-                    )
-                )
+            mic_amp_raw_list = list(series_mic_amp_raw)
+            mic_amp_filtered_list = list(series_mic_amp_filtered)
+            line_mic_amp_raw.set_data(t_rel, mic_amp_raw_list)
+            line_mic_amp_smooth.set_data(t_rel, mic_amp_filtered_list)
 
             # Update camera frame
             if CAMERA_ENABLED and camera and camera_img is not None:
-                frame = camera.get_frame()
-                if frame is not None:
-                    camera_img.set_data(frame)
-                else:
-                    # Show connection status if no frame available
-                    status = camera.get_status()
-                    placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
-                    cv2.putText(
-                        placeholder,
-                        f"Camera: {status}",
-                        (150, 240),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        1,
-                        (255, 255, 0),
-                        2,
-                    )
-                    camera_img.set_data(placeholder)
+                if now_update_ts - last_camera_update >= (1.0 / CAMERA_DISPLAY_FPS):
+                    last_camera_update = now_update_ts
+                    frame = camera.get_frame()
+                    if frame is not None:
+                        if frame.shape[1] != CAMERA_DISPLAY_WIDTH:
+                            scale = CAMERA_DISPLAY_WIDTH / frame.shape[1]
+                            new_h = int(frame.shape[0] * scale)
+                            frame = cv2.resize(frame, (CAMERA_DISPLAY_WIDTH, new_h))
+                        camera_img.set_data(frame)
+                    else:
+                        # Show connection status if no frame available
+                        status = camera.get_status()
+                        placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+                        cv2.putText(
+                            placeholder,
+                            f"Camera: {status}",
+                            (150, 240),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            1,
+                            (255, 255, 0),
+                            2,
+                        )
+                        camera_img.set_data(placeholder)
 
             # Batch all axis updates together for efficiency
             if t_rel:
@@ -571,24 +575,27 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 if x_max - x_min < MIN_TIME_ZOOM:
                     x_max = x_min + MIN_TIME_ZOOM
 
-                ax_amp.relim()
-                ax_amp.autoscale_view()
-
-                # Ensure minimum y-axis range
-                y_min, y_max = ax_amp.get_ylim()
-                if y_max - y_min < MIN_AMPLITUDE_ZOOM:
-                    y_center = (y_max + y_min) / 2
-                    y_min = y_center - MIN_AMPLITUDE_ZOOM / 2
-                    y_max = y_center + MIN_AMPLITUDE_ZOOM / 2
-                    # Ensure y_min is never negative (amplitude can't be negative)
-                    if y_min < 0:
-                        y_min = 0
-                        y_max = MIN_AMPLITUDE_ZOOM
+                # Compute y-limits directly (faster than relim/autoscale)
+                if mic_amp_raw_list or mic_amp_filtered_list:
+                    y_min = 0.0
+                    y_max = max(
+                        max(mic_amp_raw_list, default=0.0),
+                        max(mic_amp_filtered_list, default=0.0),
+                    )
+                    if y_max - y_min < MIN_AMPLITUDE_ZOOM:
+                        y_max = y_min + MIN_AMPLITUDE_ZOOM
                     ax_amp.set_ylim(y_min, y_max)
 
                 ax_amp.set_xlim(x_min, x_max)
 
-            plt.pause(0.01)  # Slightly longer pause for smoother updates
+                # Update tip marker collection once per refresh
+                tip_segments = [
+                    ((tip_ts - start_ts, y_min), (tip_ts - start_ts, y_max))
+                    for tip_ts in tip_times
+                ]
+                tip_line_collection.set_segments(tip_segments)
+
+            plt.pause(0.001)
     except KeyboardInterrupt:
         print("\nStopping...")
     finally:
