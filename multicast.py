@@ -64,9 +64,10 @@ sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
 now = datetime.now()
 stamp = now.strftime("%Y%m%d_%H%M%S")
 date_folder = now.strftime("%Y-%m-%d")
+hour_folder = now.strftime("%H")
 
-# Create organized folder structure: data/YYYY-MM-DD/
-output_dir = Path("data") / date_folder
+# Create organized folder structure: data/YYYY-MM-DD/HH/
+output_dir = Path("data") / date_folder / hour_folder
 output_dir.mkdir(parents=True, exist_ok=True)
 
 OUTPUT_CSV = output_dir / f"rain_intensity_{stamp}.csv"
