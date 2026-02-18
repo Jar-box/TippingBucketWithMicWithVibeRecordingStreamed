@@ -12,6 +12,8 @@ import threading
 
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import matplotlib.dates as mdates
+from matplotlib.ticker import FuncFormatter
 from matplotlib.collections import LineCollection
 import plotly.graph_objects as go
 import cv2
@@ -360,10 +362,18 @@ with open(OUTPUT_CSV, "w", newline="") as f:
     )
 
     ax_amp.set_title("Mic Amplitude: RAW vs SMOOTHED", fontsize=14, fontweight="bold")
-    ax_amp.set_xlabel("Time (s)", fontsize=12)
+    ax_amp.set_xlabel("Duration (s)", fontsize=12, labelpad=35)
     ax_amp.set_ylabel("Mic amplitude", fontsize=12)
     ax_amp.legend(loc="upper right", framealpha=0.95, fontsize=11)
     ax_amp.grid(True, alpha=0.3)
+    
+    # Create secondary x-axis for real time labels
+    ax_time = ax_amp.twiny()
+    ax_time.set_xlabel("Real Time", fontsize=10)
+    ax_time.xaxis.set_ticks_position('bottom')
+    ax_time.xaxis.set_label_position('bottom')
+    ax_time.spines['bottom'].set_position(('outward', 40))
+    
     fig.tight_layout()
 
     print("Reading serial... Press Ctrl+C to stop")
@@ -587,6 +597,14 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                     ax_amp.set_ylim(y_min, y_max)
 
                 ax_amp.set_xlim(x_min, x_max)
+                
+                # Update secondary time axis
+                ax_time.set_xlim(x_min, x_max)
+                # Format time ticks to show real clock time
+                def format_time_tick(x, pos):
+                    real_time = start_ts + x
+                    return datetime.fromtimestamp(real_time).strftime('%H:%M:%S')
+                ax_time.xaxis.set_major_formatter(FuncFormatter(format_time_tick))
 
                 # Update tip marker collection once per refresh
                 tip_segments = [
@@ -635,10 +653,24 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 fontsize=14,
                 fontweight="bold",
             )
-            ax_amp_left_arch.set_xlabel("Time (s)", fontsize=12)
+            ax_amp_left_arch.set_xlabel("Duration (s)", fontsize=12, labelpad=35)
             ax_amp_left_arch.set_ylabel("Mic amplitude", fontsize=12)
             ax_amp_left_arch.legend(loc="upper right", framealpha=0.95, fontsize=11)
             ax_amp_left_arch.grid(True, alpha=0.3)
+            
+            # Create secondary x-axis for real time labels on archive plot
+            ax_time_arch = ax_amp_left_arch.twiny()
+            ax_time_arch.set_xlabel("Real Time", fontsize=10)
+            ax_time_arch.xaxis.set_ticks_position('bottom')
+            ax_time_arch.xaxis.set_label_position('bottom')
+            ax_time_arch.spines['bottom'].set_position(('outward', 40))
+            ax_time_arch.set_xlim(ax_amp_left_arch.get_xlim())
+            
+            # Format time ticks to show real clock time
+            def format_archive_time_tick(x, pos):
+                real_time = t0_arch + x
+                return datetime.fromtimestamp(real_time).strftime('%H:%M:%S')
+            ax_time_arch.xaxis.set_major_formatter(FuncFormatter(format_archive_time_tick))
 
             # Draw tip lines on archive plot
             for tip_ts in archive_tip_times:
