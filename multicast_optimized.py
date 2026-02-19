@@ -41,7 +41,9 @@ SMOOTHING_FACTOR = 0.01  # Exponential smoothing alpha (0=max smoothing, 1=no sm
 # 0.15 allows gradual rain accumulation while filtering transient noise
 
 # === PERFORMANCE OPTIMIZATIONS ===
-UPDATE_EVERY_N_SAMPLES = 10  # Only update plot every N samples (reduces CPU/GPU load)
+# CRITICAL: Socket is sending data ~100ms apart. Throttle plot updates aggressively.
+# Increasing this reduces CPU load and matches network throughput → smoother experience
+UPDATE_EVERY_N_SAMPLES = 20  # Only update plot every N samples (reduces CPU/GPU load)
 FIGURE_SIZE = (12, 7)  # Smaller figure = faster rendering
 
 # === ZOOM LIMITS ===
@@ -183,17 +185,10 @@ with open(OUTPUT_CSV, "w", newline="") as f:
     ax_amp_left.set_title(
         "Mic Amplitude: RAW vs SMOOTHED", fontsize=14, fontweight="bold"
     )
-    ax_amp_left.set_xlabel("Duration (s)", fontsize=12, labelpad=35)
+    ax_amp_left.set_xlabel("Duration (s)", fontsize=12)
     ax_amp_left.set_ylabel("Mic amplitude", fontsize=12)
     ax_amp_left.legend(loc="upper right", framealpha=0.95, fontsize=11)
     ax_amp_left.grid(True, alpha=0.3)
-
-    # Create secondary x-axis for real time labels
-    ax_time_left = ax_amp_left.twiny()
-    ax_time_left.set_xlabel("Real Time", fontsize=10)
-    ax_time_left.xaxis.set_ticks_position('bottom')
-    ax_time_left.xaxis.set_label_position('bottom')
-    ax_time_left.spines['bottom'].set_position(('outward', 40))
 
     fig.tight_layout()
 
@@ -207,6 +202,7 @@ with open(OUTPUT_CSV, "w", newline="") as f:
     tip_lines_amp_left = []
     tip_lines_amp_right = []
     is_closed = False
+    last_tip_count_drawn = 0  # Track which tips we've already drawn
 
     def on_close(event):
         global is_closed
@@ -357,7 +353,9 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                     mic_rate_filtered,
                 ]
             )
-            f.flush()
+            # Only flush periodically to reduce disk I/O overhead
+            if sample_counter % 100 == 0:
+                f.flush()
 
             # === PERFORMANCE OPTIMIZATION: Throttle plot updates ===
             sample_counter += 1
@@ -373,18 +371,18 @@ with open(OUTPUT_CSV, "w", newline="") as f:
             line_mic_amp_raw.set_data(t_rel, list(series_mic_amp_raw))
             line_mic_amp_smooth.set_data(t_rel, list(series_mic_amp_filtered))
 
-            # Remove old tip lines and redraw for current window (amp_left only)
-            for ln in tip_lines_amp_left:
-                ln.remove()
-            tip_lines_amp_left.clear()
-
-            for tip_ts in tip_times:
+            # Only add NEW tip lines (don't recreate all of them every time)
+            while last_tip_count_drawn < len(tip_times):
+                tip_ts = tip_times[last_tip_count_drawn]
                 x = tip_ts - start_ts
-                tip_lines_amp_left.append(
-                    ax_amp_left.axvline(
-                        x=x, color="red", alpha=0.4, linewidth=1.5, linestyle="--"
+                # Only draw if within visible window
+                if x >= 0:
+                    tip_lines_amp_left.append(
+                        ax_amp_left.axvline(
+                            x=x, color="red", alpha=0.4, linewidth=1.5, linestyle="--"
+                        )
                     )
-                )
+                last_tip_count_drawn += 1
 
             # ===== ARCHIVED: Other tip lines (commented out for future use) =====
             # for ln in tip_lines_db_left: ln.remove()
@@ -400,11 +398,31 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 if x_max - x_min < MIN_TIME_ZOOM:
                     x_max = x_min + MIN_TIME_ZOOM
 
-                ax_amp_left.relim()
-                ax_amp_left.autoscale_view()
+                # Remove old tip lines that have scrolled out of view
+                old_tip_lines = [
+                    ln for ln in tip_lines_amp_left if ln.get_xdata()[0] < x_min
+                ]
+                for ln in old_tip_lines:
+                    ln.remove()
+                tip_lines_amp_left = [
+                    ln for ln in tip_lines_amp_left if ln.get_xdata()[0] >= x_min
+                ]
 
-                # Ensure minimum y-axis range
-                y_min, y_max = ax_amp_left.get_ylim()
+                # Calculate y-axis range only from recent visible data (more efficient)
+                recent_raw = (
+                    [v for v in series_mic_amp_raw] if series_mic_amp_raw else [0]
+                )
+                recent_filtered = (
+                    [v for v in series_mic_amp_filtered]
+                    if series_mic_amp_filtered
+                    else [0]
+                )
+                if recent_raw or recent_filtered:
+                    y_min = min(min(recent_raw), min(recent_filtered))
+                    y_max = max(max(recent_raw), max(recent_filtered))
+                else:
+                    y_min, y_max = 0, 1024
+
                 if y_max - y_min < MIN_AMPLITUDE_ZOOM:
                     y_center = (y_max + y_min) / 2
                     y_min = y_center - MIN_AMPLITUDE_ZOOM / 2
@@ -417,15 +435,7 @@ with open(OUTPUT_CSV, "w", newline="") as f:
 
                 ax_amp_left.set_xlim(x_min, x_max)
 
-                # Update secondary time axis
-                ax_time_left.set_xlim(x_min, x_max)
-                # Format time ticks to show real clock time
-                def format_time_tick(x, pos):
-                    real_time = start_ts + x
-                    return datetime.fromtimestamp(real_time).strftime('%H:%M:%S')
-                ax_time_left.xaxis.set_major_formatter(FuncFormatter(format_time_tick))
-
-            plt.pause(0.01)  # Slightly longer pause for smoother updates
+            plt.pause(0.001)  # Minimal pause for faster updates
     except KeyboardInterrupt:
         print("\nStopping...")
     finally:
@@ -440,8 +450,14 @@ with open(OUTPUT_CSV, "w", newline="") as f:
             t0_arch = archive_t[0]
             t_rel_arch = [t - t0_arch for t in archive_t]
 
+            # Convert relative time to actual timestamps for x-axis
+            t_real_arch = [datetime.fromtimestamp(t) for t in archive_t]
+            t_numeric_arch = mdates.date2num(
+                t_real_arch
+            )  # Convert to matplotlib numeric format
+
             ax_amp_left_arch.plot(
-                t_rel_arch,
+                t_numeric_arch,
                 list(archive_mic_amp_raw),
                 label="Mic amplitude RAW",
                 color="green",
@@ -449,7 +465,7 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 linewidth=1.5,
             )
             ax_amp_left_arch.plot(
-                t_rel_arch,
+                t_numeric_arch,
                 list(archive_mic_amp_filtered),
                 label="Mic amplitude SMOOTHED",
                 color="orange",
@@ -461,30 +477,21 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 fontsize=14,
                 fontweight="bold",
             )
-            ax_amp_left_arch.set_xlabel("Duration (s)", fontsize=12, labelpad=35)
+            ax_amp_left_arch.set_xlabel("Time", fontsize=12)
             ax_amp_left_arch.set_ylabel("Mic amplitude", fontsize=12)
             ax_amp_left_arch.legend(loc="upper right", framealpha=0.95, fontsize=11)
             ax_amp_left_arch.grid(True, alpha=0.3)
 
-            # Create secondary x-axis for real time labels on archive plot
-            ax_time_arch = ax_amp_left_arch.twiny()
-            ax_time_arch.set_xlabel("Real Time", fontsize=10)
-            ax_time_arch.xaxis.set_ticks_position('bottom')
-            ax_time_arch.xaxis.set_label_position('bottom')
-            ax_time_arch.spines['bottom'].set_position(('outward', 40))
-            ax_time_arch.set_xlim(ax_amp_left_arch.get_xlim())
+            # Format x-axis to show time nicely
+            ax_amp_left_arch.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
+            ax_amp_left_arch.xaxis.set_major_locator(mdates.AutoDateLocator())
+            fig_archive.autofmt_xdate()  # Rotate labels for better readability
 
-            # Format time ticks to show real clock time
-            def format_archive_time_tick(x, pos):
-                real_time = t0_arch + x
-                return datetime.fromtimestamp(real_time).strftime('%H:%M:%S')
-            ax_time_arch.xaxis.set_major_formatter(FuncFormatter(format_archive_time_tick))
-
-            # Draw tip lines on archive plot
+            # Draw tip lines on archive plot (using numeric datetime)
             for tip_ts in archive_tip_times:
-                x = tip_ts - t0_arch
+                x_real = float(mdates.date2num(datetime.fromtimestamp(tip_ts)))
                 ax_amp_left_arch.axvline(
-                    x=x, color="red", alpha=0.3, linewidth=1, linestyle="--"
+                    x=x_real, color="red", alpha=0.3, linewidth=1, linestyle="--"
                 )
 
             # Apply minimum y-axis zoom to saved PNG (height only, not time)
@@ -507,53 +514,59 @@ with open(OUTPUT_CSV, "w", newline="") as f:
             print("Generating interactive HTML plot...")
             fig_interactive = go.Figure()
 
-            # Add RAW amplitude trace
+            # Add RAW amplitude trace (using real timestamps)
             fig_interactive.add_trace(
                 go.Scatter(
-                    x=t_rel_arch,
+                    x=t_real_arch,
                     y=list(archive_mic_amp_raw),
                     name="Mic amplitude RAW",
                     mode="lines",
                     line=dict(color="green", width=1.5),
-                    hovertemplate="<b>RAW</b><br>Time: %{x:.2f}s<br>Amplitude: %{y:.0f}<extra></extra>",
+                    hovertemplate="<b>RAW</b><br>Time: %{x|%H:%M:%S}<br>Amplitude: %{y:.0f}<extra></extra>",
                 )
             )
 
-            # Add SMOOTHED amplitude trace
+            # Add SMOOTHED amplitude trace (using real timestamps)
             fig_interactive.add_trace(
                 go.Scatter(
-                    x=t_rel_arch,
+                    x=t_real_arch,
                     y=list(archive_mic_amp_filtered),
                     name="Mic amplitude SMOOTHED",
                     mode="lines",
                     line=dict(color="orange", width=2),
-                    hovertemplate="<b>SMOOTHED</b><br>Time: %{x:.2f}s<br>Amplitude: %{y:.0f}<extra></extra>",
+                    hovertemplate="<b>SMOOTHED</b><br>Time: %{x|%H:%M:%S}<br>Amplitude: %{y:.0f}<extra></extra>",
                 )
             )
 
-            # Add tip lines as vertical lines
+            # Add tip lines as vertical lines (using real timestamps)
             for tip_ts in archive_tip_times:
-                x_tip = tip_ts - t0_arch
-                fig_interactive.add_vline(
-                    x=x_tip,
-                    line_color="red",
-                    line_width=1,
-                    line_dash="dash",
+                x_tip_real = datetime.fromtimestamp(tip_ts)
+                # Use shapes instead of add_vline to avoid type mismatch issues
+                fig_interactive.add_shape(
+                    type="line",
+                    x0=x_tip_real,
+                    x1=x_tip_real,
+                    y0=0,
+                    y1=1,
+                    yref="paper",
+                    line=dict(color="red", width=1, dash="dash"),
                     opacity=0.3,
-                    annotation_text="Tip",
-                    annotation_position="top",
                 )
 
             # Update layout for interactivity
             fig_interactive.update_layout(
                 title="Mic Amplitude (RAW vs SMOOTHED) - Full Session - Interactive",
-                xaxis_title="Time (s)",
+                xaxis_title="Time",
                 yaxis_title="Mic Amplitude",
                 hovermode="x unified",
                 template="plotly_white",
                 height=700,
                 showlegend=True,
                 legend=dict(x=1.0, y=1.0, xanchor="right", yanchor="top"),
+                xaxis=dict(
+                    tickformat="%H:%M:%S",
+                    tickmode="auto",
+                ),
             )
 
             # Save interactive HTML

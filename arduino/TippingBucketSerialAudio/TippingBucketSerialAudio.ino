@@ -10,7 +10,7 @@ const int SOUND_PIN = A2;   // Micro MAX4466
 
 // --- Audio Streaming ---
 const unsigned long SOUND_SAMPLE_PERIOD_US = 100;   // ~10 kHz sampling rate (stable for UNO, actual ~8kHz with overhead)
-const unsigned long STATUS_REPORT_MS = 100;         // Send status every 100ms
+const unsigned long STATUS_REPORT_MS = 50;          // Send status every 50ms (20 Hz updates)
 const int AUDIO_BUFFER_SIZE = 400;                  // Buffer 400 samples before sending (~50ms at 8kHz)
 
 int audioBuffer[AUDIO_BUFFER_SIZE];

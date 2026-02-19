@@ -1,0 +1,1 @@
+elapsed_s,unix_ts,arduino_ms,sound_amp,tip_count,last_tip_dt_ms,reed_state,bucket_rate_mm_hr,mic_db_unfiltered,mic_db_filtered
