@@ -1,0 +1,19 @@
+# Core plotting and data visualization
+matplotlib>=3.5.0
+plotly>=5.0.0
+numpy>=1.21.0
+
+# Serial communication
+pyserial>=3.5
+
+# Audio processing and streaming
+sounddevice>=0.4.5
+soundfile>=0.11.0
+pydub>=0.25.1
+pyaudio>=0.2.13
+
+# Computer vision (for multicast_with_camera.py)
+opencv-python>=4.5.0
+
+# Type stubs for better IDE support
+types-pyserial>=3.5.0.0

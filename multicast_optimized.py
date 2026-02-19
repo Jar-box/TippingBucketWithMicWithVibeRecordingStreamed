@@ -36,7 +36,7 @@ MIC_DB_REF = 1.0
 MIC_SUPPRESSION_SECONDS = 0.35  # Suppress mic for this many seconds after a bucket tip
 
 # === SMOOTHING PARAMETERS ===
-SMOOTHING_FACTOR = 0.05  # Exponential smoothing alpha (0=max smoothing, 1=no smoothing)
+SMOOTHING_FACTOR = 0.01  # Exponential smoothing alpha (0=max smoothing, 1=no smoothing)
 # Lower values = more smoothing, prevents single spikes
 # 0.15 allows gradual rain accumulation while filtering transient noise
 
@@ -112,6 +112,9 @@ sample_counter = 0  # Performance: count samples between plot updates
 # Exponentially smoothed values (initialized to zero, will converge over first few samples)
 smoothed_mic_amp = 0.0
 smoothed_mic_db = 0.0
+
+# Raw amplitude with suppression applied (but less smoothing than orange line)
+mic_amp_suppressed_raw = 0.0
 
 
 def exponential_smooth(
@@ -292,6 +295,15 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 mic_rate_unfiltered, smoothed_mic_db, SMOOTHING_FACTOR
             )
 
+            # === SUPPRESSION WITHOUT SMOOTHING (for green line) ===
+            # Apply suppression to raw amplitude, but keep it unsmoothed
+            if now_ts < mic_suppressed_until:
+                # During suppression, flatten to the smoothed baseline to avoid mechanical noise
+                mic_amp_suppressed_raw = smoothed_mic_amp
+            else:
+                # Normal operation: use raw unsmoothed value
+                mic_amp_suppressed_raw = mic_amp_unfiltered
+
             # Filtered amplitude: apply suppression if recently tipped, otherwise use smoothed value
             if now_ts < mic_suppressed_until:
                 # During suppression, use average of past samples to avoid mechanical noise
@@ -318,7 +330,7 @@ with open(OUTPUT_CSV, "w", newline="") as f:
             series_bucket.append(bucket_rate)
             series_mic_raw.append(mic_rate_unfiltered)
             series_mic_filtered.append(mic_rate_filtered)
-            series_mic_amp_raw.append(mic_amp_unfiltered)
+            series_mic_amp_raw.append(mic_amp_suppressed_raw)
             series_mic_amp_filtered.append(mic_amp_filtered)
             prune_old(now_ts)  # Prune live display to 30s window
 
@@ -327,7 +339,7 @@ with open(OUTPUT_CSV, "w", newline="") as f:
             archive_bucket.append(bucket_rate)
             archive_mic_raw.append(mic_rate_unfiltered)
             archive_mic_filtered.append(mic_rate_filtered)
-            archive_mic_amp_raw.append(mic_amp_unfiltered)
+            archive_mic_amp_raw.append(mic_amp_suppressed_raw)
             archive_mic_amp_filtered.append(mic_amp_filtered)
 
             # Write log

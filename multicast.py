@@ -33,10 +33,10 @@ TIP_MM_PER_TIP = 100  # Typical tipping bucket size (mm per tip)
 RESET_INTERVAL = 60  # Reset tip count every N seconds for rate calculation
 # Mic amplitude -> decibels (relative). Use 1.0 as reference to avoid -inf.
 MIC_DB_REF = 1.0
-MIC_SUPPRESSION_SECONDS = 0.35  # Suppress mic for this many seconds after a bucket tip
+MIC_SUPPRESSION_SECONDS = 0.8  # Suppress mic for this many seconds after a bucket tip
 
 # === SMOOTHING PARAMETERS ===
-SMOOTHING_FACTOR = 0.15  # Exponential smoothing alpha (0=max smoothing, 1=no smoothing)
+SMOOTHING_FACTOR = 0.01  # Exponential smoothing alpha (0=max smoothing, 1=no smoothing)
 # Lower values = more smoothing, prevents single spikes
 # 0.15 allows gradual rain accumulation while filtering transient noise
 
@@ -107,6 +107,9 @@ mic_amp_history = deque(maxlen=10)  # amplitude history
 # Exponentially smoothed values (initialized to zero, will converge over first few samples)
 smoothed_mic_amp = 0.0
 smoothed_mic_db = 0.0
+
+# Raw amplitude with suppression applied (but less smoothing than orange line)
+mic_amp_suppressed_raw = 0.0
 
 
 def exponential_smooth(
@@ -183,9 +186,9 @@ with open(OUTPUT_CSV, "w", newline="") as f:
     # Create secondary x-axis for real time labels
     ax_time_left = ax_amp_left.twiny()
     ax_time_left.set_xlabel("Real Time", fontsize=10)
-    ax_time_left.xaxis.set_ticks_position('bottom')
-    ax_time_left.xaxis.set_label_position('bottom')
-    ax_time_left.spines['bottom'].set_position(('outward', 40))
+    ax_time_left.xaxis.set_ticks_position("bottom")
+    ax_time_left.xaxis.set_label_position("bottom")
+    ax_time_left.spines["bottom"].set_position(("outward", 40))
 
     fig.tight_layout()
 
@@ -287,6 +290,15 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 mic_rate_unfiltered, smoothed_mic_db, SMOOTHING_FACTOR
             )
 
+            # === SUPPRESSION WITHOUT SMOOTHING (for green line) ===
+            # Apply suppression to raw amplitude, but keep it unsmoothed
+            if now_ts < mic_suppressed_until:
+                # During suppression, flatten to the smoothed baseline to avoid mechanical noise
+                mic_amp_suppressed_raw = smoothed_mic_amp
+            else:
+                # Normal operation: use raw unsmoothed value
+                mic_amp_suppressed_raw = mic_amp_unfiltered
+
             # Filtered amplitude: apply suppression if recently tipped, otherwise use smoothed value
             if now_ts < mic_suppressed_until:
                 # During suppression, use average of past samples to avoid mechanical noise
@@ -313,9 +325,17 @@ with open(OUTPUT_CSV, "w", newline="") as f:
             series_bucket.append(bucket_rate)
             series_mic_raw.append(mic_rate_unfiltered)
             series_mic_filtered.append(mic_rate_filtered)
-            series_mic_amp_raw.append(mic_amp_unfiltered)
+            series_mic_amp_raw.append(mic_amp_suppressed_raw)
             series_mic_amp_filtered.append(mic_amp_filtered)
             prune_old(now_ts)  # Prune live display to 30s window
+
+            # Archive ALL data for final PNG
+            archive_t.append(now_ts)
+            archive_bucket.append(bucket_rate)
+            archive_mic_raw.append(mic_rate_unfiltered)
+            archive_mic_filtered.append(mic_rate_filtered)
+            archive_mic_amp_raw.append(mic_amp_suppressed_raw)
+            archive_mic_amp_filtered.append(mic_amp_filtered)
 
             # Archive ALL data for final PNG
             archive_t.append(now_ts)
@@ -393,10 +413,12 @@ with open(OUTPUT_CSV, "w", newline="") as f:
 
             # Update secondary time axis
             ax_time_left.set_xlim(x_min, x_max)
+
             # Format time ticks to show real clock time
             def format_time_tick(x, pos):
                 real_time = start_ts + x
-                return datetime.fromtimestamp(real_time).strftime('%H:%M:%S')
+                return datetime.fromtimestamp(real_time).strftime("%H:%M:%S")
+
             ax_time_left.xaxis.set_major_formatter(FuncFormatter(format_time_tick))
 
             plt.pause(0.001)  # Minimal pause for plot update
@@ -442,16 +464,19 @@ with open(OUTPUT_CSV, "w", newline="") as f:
             # Create secondary x-axis for real time labels on archive plot
             ax_time_arch = ax_amp_left_arch.twiny()
             ax_time_arch.set_xlabel("Real Time", fontsize=10)
-            ax_time_arch.xaxis.set_ticks_position('bottom')
-            ax_time_arch.xaxis.set_label_position('bottom')
-            ax_time_arch.spines['bottom'].set_position(('outward', 40))
+            ax_time_arch.xaxis.set_ticks_position("bottom")
+            ax_time_arch.xaxis.set_label_position("bottom")
+            ax_time_arch.spines["bottom"].set_position(("outward", 40))
             ax_time_arch.set_xlim(ax_amp_left_arch.get_xlim())
 
             # Format time ticks to show real clock time
             def format_archive_time_tick(x, pos):
                 real_time = t0_arch + x
-                return datetime.fromtimestamp(real_time).strftime('%H:%M:%S')
-            ax_time_arch.xaxis.set_major_formatter(FuncFormatter(format_archive_time_tick))
+                return datetime.fromtimestamp(real_time).strftime("%H:%M:%S")
+
+            ax_time_arch.xaxis.set_major_formatter(
+                FuncFormatter(format_archive_time_tick)
+            )
 
             # Draw tip lines on archive plot
             for tip_ts in archive_tip_times:
