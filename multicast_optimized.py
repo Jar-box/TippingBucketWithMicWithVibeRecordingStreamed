@@ -382,7 +382,7 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 x = tip_ts - start_ts
                 tip_lines_amp_left.append(
                     ax_amp_left.axvline(
-                        x=x, color="red", alpha=0.4, linewidth=1.5, linestyle="--"
+                        x=x, color="blue", alpha=0.6, linewidth=2.5, linestyle="--"
                     )
                 )
 
@@ -484,7 +484,7 @@ with open(OUTPUT_CSV, "w", newline="") as f:
             for tip_ts in archive_tip_times:
                 x = tip_ts - t0_arch
                 ax_amp_left_arch.axvline(
-                    x=x, color="red", alpha=0.3, linewidth=1, linestyle="--"
+                    x=x, color="blue", alpha=0.5, linewidth=2, linestyle="--"
                 )
 
             # Apply minimum y-axis zoom to saved PNG (height only, not time)
@@ -536,10 +536,10 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 x_tip = tip_ts - t0_arch
                 fig_interactive.add_vline(
                     x=x_tip,
-                    line_color="red",
-                    line_width=1,
+                    line_color="blue",
+                    line_width=2,
                     line_dash="dash",
-                    opacity=0.3,
+                    opacity=0.5,
                     annotation_text="Tip",
                     annotation_position="top",
                 )
