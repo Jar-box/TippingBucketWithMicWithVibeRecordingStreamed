@@ -17,6 +17,24 @@ All three files have the same function but differ in execution method.
 - **requirements.txt** - Python dependencies for the project.
 - **CAMERA_SETUP_GUIDE.md** - Camera setup documentation (not currently in use).
 
+### Experimental Audio Recording Files (Currently Dropped)
+
+The following files were created for an attempt to record audio and save MP3 and WAV files:
+
+- **serial_pure_audio.py** - Pure audio recording without graph plotting
+- **serial_with_audio.py** - Audio recording with graph plotting
+- **arduino/TippingBucketPureAudioSerial/TippingBucketPureAudioSerial.ino** - Arduino code for pure audio recording
+- **arduino/TippingBucketSerialAudio/TippingBucketSerialAudio.ino** - Arduino code for audio recording with data
+
+**Difference between "pure" and "non-pure" versions:** The "pure" files only record audio without plotting graphs, while the "non-pure" versions include graph plotting functionality.
+
+**Status:** This feature has been dropped for now due to:
+
+- Poor audio quality from the microphone (crunchy sound)
+- Time constraints - requires more development time to polish
+- Need to prioritize documentation finalization
+- May be revisited in the future if required
+
 ## Output Files
 
 The system currently records data in the following formats:

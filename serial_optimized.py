@@ -68,7 +68,9 @@ MIN_TIME_ZOOM = 30.0  # Minimum x-axis range in seconds
 MIN_AMPLITUDE_ZOOM = 1024.0  # Minimum y-axis range for amplitude
 
 # ======== AUDIO RECORDING (UDP MULTICAST) ========
-AUDIO_ENABLE = True
+# NOTE: Audio recording via UDP only works if Arduino is sending audio over network
+# If connected via Serial/USB only, set AUDIO_ENABLE = False
+AUDIO_ENABLE = False  # Disabled - no UDP audio when using Serial/USB connection
 AUDIO_SAMPLE_RATE = 8000  # Match Arduino sampling rate
 AUDIO_CHANNELS = 1
 AUDIO_BITRATE = "192k"  # MP3 bitrate (high quality mono)
@@ -186,6 +188,10 @@ class UDPAudioRecorder:
 
     def _recorder(self):
         """Background thread that receives UDP packets and writes audio samples to WAV."""
+        packets_received = 0
+        samples_written = 0
+        last_report_time = time.time()
+
         try:
             # Setup UDP multicast socket
             self.sock = socket.socket(
@@ -215,6 +221,8 @@ class UDPAudioRecorder:
                 subtype="PCM_16",
             )
 
+            print("[AUDIO] Waiting for UDP audio packets...")
+
             audio_buffer = b""
 
             while not self.stop_event.is_set():
@@ -222,6 +230,21 @@ class UDPAudioRecorder:
                     data = self.sock.recv(10240)
                     if not data:
                         continue
+
+                    packets_received += 1
+
+                    # Report status every 5 seconds
+                    now = time.time()
+                    if now - last_report_time >= 5.0:
+                        if packets_received == 0:
+                            print(
+                                "[AUDIO] WARNING: No UDP packets received. Is Arduino sending audio over network?"
+                            )
+                        else:
+                            print(
+                                f"[AUDIO] Received {packets_received} packets, wrote {samples_written} samples"
+                            )
+                        last_report_time = now
 
                     audio_buffer += data
 
@@ -261,6 +284,7 @@ class UDPAudioRecorder:
                         import numpy as np
 
                         self.file.write(np.array(samples, dtype=np.int16))
+                        samples_written += len(samples)
 
                 except socket.timeout:
                     continue
@@ -274,6 +298,15 @@ class UDPAudioRecorder:
                 self.file.close()
             if self.sock:
                 self.sock.close()
+
+            if packets_received == 0:
+                print(
+                    "[AUDIO] No audio packets received. Arduino might not be sending audio over UDP."
+                )
+            else:
+                print(
+                    f"[AUDIO] Recording finished: {packets_received} packets, {samples_written} samples"
+                )
 
     def start(self):
         """Start background recording thread."""
@@ -291,9 +324,19 @@ def convert_wav_to_mp3(wav_path: Path, mp3_path: Path, bitrate: str):
     if not AudioSegment:
         print("[AUDIO] pydub/ffmpeg not available; keeping WAV only")
         return False
-    audio = AudioSegment.from_wav(wav_path)
-    audio.export(mp3_path, format="mp3", bitrate=bitrate)
-    return True
+    try:
+        audio = AudioSegment.from_wav(wav_path)
+        audio.export(mp3_path, format="mp3", bitrate=bitrate)
+        return True
+    except FileNotFoundError:
+        print("[AUDIO] ffmpeg not found in PATH; keeping WAV only")
+        print(
+            "[AUDIO] To enable MP3 conversion, install ffmpeg: https://ffmpeg.org/download.html"
+        )
+        return False
+    except Exception as e:
+        print(f"[AUDIO] MP3 conversion failed: {e}; keeping WAV only")
+        return False
 
 
 def exponential_smooth(
