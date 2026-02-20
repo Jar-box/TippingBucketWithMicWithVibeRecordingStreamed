@@ -43,6 +43,16 @@ FIGURE_SIZE = (12, 7)
 MIN_TIME_ZOOM = 30.0
 MIN_AMPLITUDE_ZOOM = 1024.0
 
+# === VISUAL STYLE ===
+TIP_LINE_COLOR = "blue"
+TIP_LINE_WIDTH = 3.5
+TIP_LINE_ALPHA = 0.9
+TIP_LINE_STYLE = "-"
+MIC_RAW_COLOR = "mediumpurple"
+MIC_RAW_ALPHA = 0.75
+MIC_SMOOTH_COLOR = "darkorange"
+MIC_SMOOTH_ALPHA = 0.95
+
 # === SOCKET SETTINGS ===
 MCAST_GRP = "230.138.19.201"
 MCAST_PORT = 5007
@@ -151,10 +161,20 @@ with open(OUTPUT_CSV, "w", newline="") as f:
     fig, ax_amp_left = plt.subplots(1, 1, figsize=(12, 6))
 
     (line_mic_amp_raw,) = ax_amp_left.plot(
-        [], [], label="Mic amplitude RAW", color="green", linewidth=1.5
+        [],
+        [],
+        label="Mic amplitude RAW",
+        color=MIC_RAW_COLOR,
+        alpha=MIC_RAW_ALPHA,
+        linewidth=1.5,
     )
     (line_mic_amp_smooth,) = ax_amp_left.plot(
-        [], [], label="Mic amplitude SMOOTHED", color="orange", linewidth=2
+        [],
+        [],
+        label="Mic amplitude SMOOTHED",
+        color=MIC_SMOOTH_COLOR,
+        alpha=MIC_SMOOTH_ALPHA,
+        linewidth=2,
     )
 
     ax_amp_left.set_title(
@@ -340,10 +360,10 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                         tip_lines_amp_left.append(
                             ax_amp_left.axvline(
                                 x=x,
-                                color="red",
-                                alpha=0.4,
-                                linewidth=1.5,
-                                linestyle="--",
+                                color=TIP_LINE_COLOR,
+                                alpha=TIP_LINE_ALPHA,
+                                linewidth=TIP_LINE_WIDTH,
+                                linestyle=TIP_LINE_STYLE,
                             )
                         )
                     last_tip_count_drawn += 1
@@ -417,16 +437,16 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 t_numeric_arch,
                 list(archive_mic_amp_raw),
                 label="Mic amplitude RAW",
-                color="green",
-                alpha=0.7,
+                color=MIC_RAW_COLOR,
+                alpha=MIC_RAW_ALPHA,
                 linewidth=1.5,
             )
             ax_amp_left_arch.plot(
                 t_numeric_arch,
                 list(archive_mic_amp_filtered),
                 label="Mic amplitude SMOOTHED",
-                color="orange",
-                alpha=0.85,
+                color=MIC_SMOOTH_COLOR,
+                alpha=MIC_SMOOTH_ALPHA,
                 linewidth=2,
             )
             ax_amp_left_arch.set_title(
@@ -446,7 +466,11 @@ with open(OUTPUT_CSV, "w", newline="") as f:
             for tip_ts in archive_tip_times:
                 tip_numeric = float(mdates.date2num(datetime.fromtimestamp(tip_ts)))
                 ax_amp_left_arch.axvline(
-                    x=tip_numeric, color="red", alpha=0.3, linewidth=1.5, linestyle="--"
+                    x=tip_numeric,
+                    color=TIP_LINE_COLOR,
+                    alpha=TIP_LINE_ALPHA,
+                    linewidth=TIP_LINE_WIDTH,
+                    linestyle=TIP_LINE_STYLE,
                 )
 
             y_min_arch, y_max_arch = ax_amp_left_arch.get_ylim()
@@ -484,7 +508,8 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                     y=list(archive_mic_amp_raw),
                     name="Mic amplitude RAW",
                     mode="lines",
-                    line=dict(color="green", width=1.5),
+                    line=dict(color=MIC_RAW_COLOR, width=1.5),
+                    opacity=MIC_RAW_ALPHA,
                     hovertemplate="<b>RAW</b><br>Time: %{x|%H:%M:%S}<br>Amplitude: %{y:.0f}<extra></extra>",
                 )
             )
@@ -495,7 +520,8 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                     y=list(archive_mic_amp_filtered),
                     name="Mic amplitude SMOOTHED",
                     mode="lines",
-                    line=dict(color="orange", width=2),
+                    line=dict(color=MIC_SMOOTH_COLOR, width=2),
+                    opacity=MIC_SMOOTH_ALPHA,
                     hovertemplate="<b>SMOOTHED</b><br>Time: %{x|%H:%M:%S}<br>Amplitude: %{y:.0f}<extra></extra>",
                 )
             )
@@ -504,9 +530,10 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 tip_datetime = datetime.fromtimestamp(tip_ts)
                 fig_interactive.add_vline(
                     x=tip_datetime,
-                    line_dash="dash",
-                    line_color="red",
-                    opacity=0.3,
+                    line_dash="solid",
+                    line_color=TIP_LINE_COLOR,
+                    opacity=TIP_LINE_ALPHA,
+                    line_width=TIP_LINE_WIDTH,
                 )
 
             fig_interactive.update_layout(
