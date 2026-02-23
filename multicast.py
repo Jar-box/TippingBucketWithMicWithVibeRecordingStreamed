@@ -50,11 +50,19 @@ BASELINE_MIN_SAMPLES = 20  # minimum samples needed to establish baseline
 START_THRESHOLD_OFFSET = 100  # amplitude above baseline to trigger rain detection
 START_THRESHOLD_MULTIPLIER = 1.5  # or baseline * this value (whichever is larger)
 START_CONFIRMATION_TIME = 5.0  # seconds - wait for tip confirmation (expected 1.7s avg)
-START_MIN_ELEVATED_TIME = 3.0  # seconds - mic must stay elevated before declaring rain detected
-START_NO_TIP_TIMEOUT = 10.0  # seconds - if no tip but mic elevated, still confirm rain (light rain)
+START_MIN_ELEVATED_TIME = (
+    3.0  # seconds - mic must stay elevated before declaring rain detected
+)
+START_NO_TIP_TIMEOUT = (
+    10.0  # seconds - if no tip but mic elevated, still confirm rain (light rain)
+)
 END_THRESHOLD_OFFSET = 20  # amplitude near baseline to trigger rain end
-END_CONFIRMATION_TIME = 45.0  # seconds - wait for siphon drainage + buffer (2.74s min interval)
-END_MIC_BASELINE_TIME = 10.0  # seconds - mic must return to baseline before end countdown
+END_CONFIRMATION_TIME = (
+    45.0  # seconds - wait for siphon drainage + buffer (2.74s min interval)
+)
+END_MIC_BASELINE_TIME = (
+    10.0  # seconds - mic must return to baseline before end countdown
+)
 
 # Rain states
 RAIN_STATE_NO_RAIN = 0
@@ -131,13 +139,17 @@ mic_amp_suppressed_raw = 0.0
 
 # ======== RAIN DETECTION STATE ========
 rain_state = RAIN_STATE_NO_RAIN
-baseline_samples = deque(maxlen=BASELINE_WINDOW * 2)  # Store samples for baseline calculation
+baseline_samples = deque(
+    maxlen=BASELINE_WINDOW * 2
+)  # Store samples for baseline calculation
 baseline_mic_amp = 0.0  # Current calculated baseline
 rain_detection_time = 0.0  # When rain was first detected (mic threshold crossed)
 rain_start_time = 0.0  # When rain was confirmed (tip occurred or timeout)
 rain_end_countdown_start = 0.0  # When rain ending countdown started
 last_tip_time = 0.0  # Timestamp of last tip
-rain_events = []  # List of rain events: [(start_time, end_time, total_tips, max_intensity), ...]
+rain_events = (
+    []
+)  # List of rain events: [(start_time, end_time, total_tips, max_intensity), ...]
 current_rain_start_tip_count = 0  # Tip count when rain started
 
 
@@ -379,24 +391,24 @@ with open(OUTPUT_CSV, "w", newline="") as f:
 
             # ======== RAIN DETECTION STATE MACHINE ========
             prev_rain_state = rain_state
-            
+
             # Calculate dynamic baseline (only during NO_RAIN state)
             if rain_state == RAIN_STATE_NO_RAIN:
                 baseline_samples.append(smoothed_mic_amp)
                 baseline_mic_amp = calculate_baseline(baseline_samples)
-            
+
             # Determine threshold values
             if baseline_mic_amp > 0:
                 start_threshold = max(
                     baseline_mic_amp + START_THRESHOLD_OFFSET,
-                    baseline_mic_amp * START_THRESHOLD_MULTIPLIER
+                    baseline_mic_amp * START_THRESHOLD_MULTIPLIER,
                 )
                 end_threshold = baseline_mic_amp + END_THRESHOLD_OFFSET
             else:
                 # No baseline established yet, use fixed values
                 start_threshold = 150
                 end_threshold = 50
-            
+
             # State machine logic
             if rain_state == RAIN_STATE_NO_RAIN:
                 # Check if mic amplitude exceeds start threshold
@@ -407,31 +419,42 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                     elif (now_ts - rain_detection_time) >= START_MIN_ELEVATED_TIME:
                         # Transition to RAIN_DETECTED
                         rain_state = RAIN_STATE_DETECTED
-                        print(f"\n[RAIN DETECTED] at {elapsed_s:.1f}s - Mic: {smoothed_mic_amp:.0f} > Threshold: {start_threshold:.0f} (baseline: {baseline_mic_amp:.0f})")
+                        print(
+                            f"\n[RAIN DETECTED] at {elapsed_s:.1f}s - Mic: {smoothed_mic_amp:.0f} > Threshold: {start_threshold:.0f} (baseline: {baseline_mic_amp:.0f})"
+                        )
                 else:
                     # Reset detection timer if mic drops below threshold
                     rain_detection_time = 0.0
-            
+
             elif rain_state == RAIN_STATE_DETECTED:
                 # Waiting for tip confirmation or timeout
-                if tip_count > previous_tip_count or (last_tip_time > 0 and (now_ts - rain_detection_time) < START_CONFIRMATION_TIME):
+                if tip_count > previous_tip_count or (
+                    last_tip_time > 0
+                    and (now_ts - rain_detection_time) < START_CONFIRMATION_TIME
+                ):
                     # Tip occurred! Confirm rain
                     rain_state = RAIN_STATE_CONFIRMED
                     rain_start_time = now_ts
                     current_rain_start_tip_count = tip_count
-                    print(f"[RAIN CONFIRMED] at {elapsed_s:.1f}s - Tip detected, total tips: {tip_count}")
+                    print(
+                        f"[RAIN CONFIRMED] at {elapsed_s:.1f}s - Tip detected, total tips: {tip_count}"
+                    )
                 elif (now_ts - rain_detection_time) >= START_NO_TIP_TIMEOUT:
                     # No tip but mic stayed elevated - light rain confirmed
                     rain_state = RAIN_STATE_CONFIRMED
                     rain_start_time = now_ts
                     current_rain_start_tip_count = tip_count
-                    print(f"[RAIN CONFIRMED - Light Rain] at {elapsed_s:.1f}s - No tip but sustained mic elevation")
+                    print(
+                        f"[RAIN CONFIRMED - Light Rain] at {elapsed_s:.1f}s - No tip but sustained mic elevation"
+                    )
                 elif smoothed_mic_amp < start_threshold:
                     # False alarm, mic dropped back down
                     rain_state = RAIN_STATE_NO_RAIN
                     rain_detection_time = 0.0
-                    print(f"[RAIN CANCELED] at {elapsed_s:.1f}s - False alarm, mic dropped")
-            
+                    print(
+                        f"[RAIN CANCELED] at {elapsed_s:.1f}s - False alarm, mic dropped"
+                    )
+
             elif rain_state == RAIN_STATE_CONFIRMED:
                 # Active rain - check for end conditions
                 if smoothed_mic_amp < end_threshold:
@@ -441,31 +464,37 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                     elif (now_ts - rain_end_countdown_start) >= END_MIC_BASELINE_TIME:
                         # Mic has been at baseline long enough, start end countdown
                         rain_state = RAIN_STATE_ENDING
-                        print(f"[RAIN ENDING] at {elapsed_s:.1f}s - Mic at baseline, waiting for siphon drainage...")
+                        print(
+                            f"[RAIN ENDING] at {elapsed_s:.1f}s - Mic at baseline, waiting for siphon drainage..."
+                        )
                 else:
                     # Mic still elevated, reset countdown
                     rain_end_countdown_start = 0.0
-            
+
             elif rain_state == RAIN_STATE_ENDING:
                 # Waiting for siphon drainage and no new tips
                 time_in_ending = now_ts - rain_end_countdown_start
-                
+
                 # Check for abort conditions
                 if smoothed_mic_amp > end_threshold or tip_count > previous_tip_count:
                     # Rain resumed!
                     rain_state = RAIN_STATE_CONFIRMED
                     rain_end_countdown_start = 0.0
-                    print(f"[RAIN RESUMED] at {elapsed_s:.1f}s - Activity detected during ending phase")
+                    print(
+                        f"[RAIN RESUMED] at {elapsed_s:.1f}s - Activity detected during ending phase"
+                    )
                 elif time_in_ending >= END_CONFIRMATION_TIME:
                     # End confirmed!
                     rain_duration = now_ts - rain_start_time
                     total_rain_tips = tip_count - current_rain_start_tip_count
                     rain_events.append((rain_start_time, now_ts, total_rain_tips, 0.0))
                     print(f"\n[RAIN ENDED] at {elapsed_s:.1f}s")
-                    print(f"  Duration: {rain_duration:.1f}s ({rain_duration/60:.1f} min)")
+                    print(
+                        f"  Duration: {rain_duration:.1f}s ({rain_duration/60:.1f} min)"
+                    )
                     print(f"  Total tips: {total_rain_tips}")
                     print(f"  Rainfall: {total_rain_tips * 0.025:.2f} mm\n")
-                    
+
                     # Reset to NO_RAIN
                     rain_state = RAIN_STATE_NO_RAIN
                     rain_detection_time = 0.0
@@ -547,10 +576,14 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 x_end = now_ts - start_ts
                 rain_shade_patches.append(
                     ax_amp_left.axvspan(
-                        x_start, x_end, color="lightblue", alpha=0.2, label="Rain Period"
+                        x_start,
+                        x_end,
+                        color="lightblue",
+                        alpha=0.2,
+                        label="Rain Period",
                     )
                 )
-            
+
             # Also shade completed rain events within the window
             for rain_event in rain_events:
                 rain_evt_start, rain_evt_end, _, _ = rain_event
@@ -634,24 +667,31 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 alpha=0.85,
                 linewidth=2,
             )
-            
+
             # Add rain period shading to archive plot
             for rain_event in rain_events:
                 rain_evt_start, rain_evt_end, total_tips, _ = rain_event
                 x_start_evt = rain_evt_start - t0_arch
                 x_end_evt = rain_evt_end - t0_arch
                 ax_amp_left_arch.axvspan(
-                    x_start_evt, x_end_evt, color="lightblue", alpha=0.2, label="Rain Period" if rain_events[0] == rain_event else ""
+                    x_start_evt,
+                    x_end_evt,
+                    color="lightblue",
+                    alpha=0.2,
+                    label="Rain Period" if rain_events[0] == rain_event else "",
                 )
                 # Add text annotation for rainfall amount
                 x_mid = (x_start_evt + x_end_evt) / 2
                 rainfall_mm = total_tips * 0.025
                 duration_min = (rain_evt_end - rain_evt_start) / 60
                 ax_amp_left_arch.text(
-                    x_mid, ax_amp_left_arch.get_ylim()[1] * 0.9,
+                    x_mid,
+                    ax_amp_left_arch.get_ylim()[1] * 0.9,
                     f"{rainfall_mm:.2f}mm\n{duration_min:.1f}min",
-                    ha="center", va="top", fontsize=9, 
-                    bbox=dict(boxstyle="round", facecolor="white", alpha=0.7)
+                    ha="center",
+                    va="top",
+                    fontsize=9,
+                    bbox=dict(boxstyle="round", facecolor="white", alpha=0.7),
                 )
             ax_amp_left_arch.set_title(
                 "Mic Amplitude (RAW vs SMOOTHED) - Full Session",
@@ -751,11 +791,14 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 x_end_evt = rain_evt_end - t0_arch
                 rainfall_mm = total_tips * 0.025
                 duration_min = (rain_evt_end - rain_evt_start) / 60
-                
+
                 fig_interactive.add_vrect(
-                    x0=x_start_evt, x1=x_end_evt,
-                    fillcolor="lightblue", opacity=0.2,
-                    layer="below", line_width=0,
+                    x0=x_start_evt,
+                    x1=x_end_evt,
+                    fillcolor="lightblue",
+                    opacity=0.2,
+                    layer="below",
+                    line_width=0,
                     annotation_text=f"Rain: {rainfall_mm:.2f}mm, {duration_min:.1f}min",
                     annotation_position="top left" if i % 2 == 0 else "top right",
                 )
@@ -786,7 +829,9 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 rainfall_mm = total_tips * 0.025
                 duration_sec = rain_evt_end - rain_evt_start
                 duration_min = duration_sec / 60
-                start_time_str = datetime.fromtimestamp(rain_evt_start).strftime("%H:%M:%S")
+                start_time_str = datetime.fromtimestamp(rain_evt_start).strftime(
+                    "%H:%M:%S"
+                )
                 end_time_str = datetime.fromtimestamp(rain_evt_end).strftime("%H:%M:%S")
                 print(f"\nEvent {i}:")
                 print(f"  Start: {start_time_str}")
