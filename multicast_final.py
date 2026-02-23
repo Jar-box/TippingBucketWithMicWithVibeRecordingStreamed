@@ -46,9 +46,9 @@ MIN_AMPLITUDE_ZOOM = 1024.0
 
 # === VISUAL STYLE ===
 TIP_LINE_COLOR = "blue"
-TIP_LINE_WIDTH = 3.5
+TIP_LINE_WIDTH = 2.5
 TIP_LINE_ALPHA = 0.9
-TIP_LINE_STYLE = "-"
+TIP_LINE_STYLE = "--"
 MIC_RAW_COLOR = "mediumpurple"
 MIC_RAW_ALPHA = 0.75
 MIC_SMOOTH_COLOR = "darkorange"
@@ -178,6 +178,17 @@ with open(OUTPUT_CSV, "w", newline="") as f:
         color=MIC_SMOOTH_COLOR,
         alpha=MIC_SMOOTH_ALPHA,
         linewidth=2,
+    )
+    
+    # Add a dummy line for tipping events in the legend
+    ax_amp_left.plot(
+        [],
+        [],
+        label="Tipping Events",
+        color=TIP_LINE_COLOR,
+        alpha=TIP_LINE_ALPHA,
+        linewidth=TIP_LINE_WIDTH,
+        linestyle=TIP_LINE_STYLE,
     )
 
     ax_amp_left.set_title(
@@ -490,6 +501,18 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 alpha=MIC_SMOOTH_ALPHA,
                 linewidth=2,
             )
+            
+            # Add a dummy line for tipping events in the legend
+            ax_amp_left_arch.plot(
+                [],
+                [],
+                label="Tipping Events",
+                color=TIP_LINE_COLOR,
+                alpha=TIP_LINE_ALPHA,
+                linewidth=TIP_LINE_WIDTH,
+                linestyle=TIP_LINE_STYLE,
+            )
+            
             ax_amp_left_arch.set_title(
                 "Mic Amplitude (RAW vs SMOOTHED) - Full Session",
                 fontsize=14,
@@ -581,6 +604,21 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 col=1,
             )
 
+            # Add a dummy trace for tipping events in the legend
+            fig_interactive.add_trace(
+                go.Scatter(
+                    x=[None],
+                    y=[None],
+                    name="Tipping Events",
+                    mode="lines",
+                    line=dict(color=TIP_LINE_COLOR, width=TIP_LINE_WIDTH, dash="dash"),
+                    opacity=TIP_LINE_ALPHA,
+                    showlegend=True,
+                ),
+                row=1,
+                col=1,
+            )
+
             # Row 2: RAW only
             fig_interactive.add_trace(
                 go.Scatter(
@@ -596,14 +634,25 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 col=1,
             )
 
-            # Add tip lines to both subplots
             for tip_ts in archive_tip_times:
                 tip_datetime = datetime.fromtimestamp(tip_ts)
                 fig_interactive.add_vline(
                     x=tip_datetime,
                     line_dash="dash",
-                    line_color="red",
-                    opacity=0.3,
+                    line_color=TIP_LINE_COLOR,
+                    opacity=TIP_LINE_ALPHA,
+                    line_width=TIP_LINE_WIDTH,
+                    row=1,
+                    col=1,
+                )
+                fig_interactive.add_vline(
+                    x=tip_datetime,
+                    line_dash="dash",
+                    line_color=TIP_LINE_COLOR,
+                    opacity=TIP_LINE_ALPHA,
+                    line_width=TIP_LINE_WIDTH,
+                    row=2,
+                    col=1,
                 )
 
             fig_interactive.update_layout(
