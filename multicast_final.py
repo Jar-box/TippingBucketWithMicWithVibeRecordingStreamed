@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.ticker import FuncFormatter
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 
 def compute_trend_line(data: list, window: int = 20) -> list:
@@ -115,6 +116,8 @@ sample_counter = 0
 smoothed_mic_amp = 0.0
 smoothed_mic_db = 0.0
 mic_amp_suppressed_raw = 0.0
+final_tip_count = 0
+final_first_tip_count = 0
 
 
 def exponential_smooth(
@@ -189,9 +192,12 @@ with open(OUTPUT_CSV, "w", newline="") as f:
 
     print("Reading from Arduino/RPi... Press Ctrl+C to stop")
 
-    start_ts = time.time()
-    last_reset_time = start_ts
-    last_diagnostics = start_ts
+    start_ts = None
+    last_reset_time = None
+    last_diagnostics = None
+    base_unix_ts = None
+    first_arduino_ms = None
+    first_tip_count = None
 
     tip_lines_amp_left = []
     is_closed = False
@@ -234,8 +240,31 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 except ValueError:
                     continue
 
-                now_ts = time.time()
-                elapsed_s = now_ts - start_ts
+                if first_arduino_ms is None:
+                    first_arduino_ms = arduino_ms
+                    base_unix_ts = time.time() - (arduino_ms / 1000.0)
+                    start_ts = base_unix_ts + (first_arduino_ms / 1000.0)
+                    last_reset_time = start_ts
+                    last_diagnostics = start_ts
+                    first_tip_count = tip_count
+                    final_first_tip_count = tip_count
+
+                # Update final counts for HTML generation
+                final_tip_count = tip_count
+
+                # Skip if not initialized (type guard)
+                if (
+                    start_ts is None
+                    or base_unix_ts is None
+                    or first_arduino_ms is None
+                    or last_reset_time is None
+                    or last_diagnostics is None
+                    or first_tip_count is None
+                ):
+                    continue
+
+                now_ts = base_unix_ts + (arduino_ms / 1000.0)
+                elapsed_s = (arduino_ms - first_arduino_ms) / 1000.0
 
                 if now_ts - last_reset_time >= RESET_INTERVAL:
                     last_reset_time = now_ts
@@ -249,10 +278,11 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 tips_since_reset = tip_count - tip_count_at_reset
                 sample_count_since_reset += 1
                 time_since_reset = now_ts - last_reset_time
+                tips_since_start = tip_count - first_tip_count
 
                 if elapsed_s % 5 < 0.5:
                     print(
-                        f"[{elapsed_s:.1f}s] amp={sound_amp}, tips={tip_count}, delta_tips={tips_since_reset}, dt={last_tip_dt_ms}ms"
+                        f"[{elapsed_s:.1f}s] amp={sound_amp}, tips={tip_count}, tips_since_start={tips_since_start}, delta_tips={tips_since_reset}, dt={last_tip_dt_ms}ms"
                     )
 
                 if tip_count > previous_tip_count:
@@ -267,9 +297,12 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 mic_rate_unfiltered = 20.0 * math.log10(max(sound_amp, 1) / MIC_DB_REF)
                 mic_amp_unfiltered = sound_amp
 
-                smoothed_mic_amp = exponential_smooth(
-                    mic_amp_unfiltered, smoothed_mic_amp, SMOOTHING_FACTOR
-                )
+                if sample_counter == 0:
+                    smoothed_mic_amp = mic_amp_unfiltered
+                else:
+                    smoothed_mic_amp = exponential_smooth(
+                        mic_amp_unfiltered, smoothed_mic_amp, SMOOTHING_FACTOR
+                    )
                 smoothed_mic_db = exponential_smooth(
                     mic_rate_unfiltered, smoothed_mic_db, SMOOTHING_FACTOR
                 )
@@ -418,11 +451,19 @@ with open(OUTPUT_CSV, "w", newline="") as f:
         print("\nStopping...")
     finally:
         plt.ioff()
+        is_closed = True
+
+        # Disconnect the close event handler before closing
+        try:
+            fig.canvas.mpl_disconnect(cid)
+        except:
+            pass
+
+        # Close the figure gracefully
         try:
             plt.close(fig)
         except:
             pass
-        is_closed = True
 
         if archive_t:
             print("Generating final plot...")
@@ -500,18 +541,30 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                     f"DEBUG: Min raw: {min(archive_mic_amp_raw)}, Max raw: {max(archive_mic_amp_raw)}"
                 )
 
-            fig_interactive = go.Figure()
+            total_tips = len(archive_tip_times)
+            fig_interactive = make_subplots(
+                rows=2,
+                cols=1,
+                subplot_titles=(
+                    "Mic Amplitude (RAW + SMOOTHED)",
+                    "Mic Amplitude (RAW only)",
+                ),
+                shared_xaxes=True,
+                vertical_spacing=0.12,
+            )
 
+            # Row 1: RAW + SMOOTHED
             fig_interactive.add_trace(
                 go.Scatter(
                     x=t_real_arch,
                     y=list(archive_mic_amp_raw),
                     name="Mic amplitude RAW",
                     mode="lines",
-                    line=dict(color=MIC_RAW_COLOR, width=1.5),
-                    opacity=MIC_RAW_ALPHA,
+                    line=dict(color="green", width=1.5),
                     hovertemplate="<b>RAW</b><br>Time: %{x|%H:%M:%S}<br>Amplitude: %{y:.0f}<extra></extra>",
-                )
+                ),
+                row=1,
+                col=1,
             )
 
             fig_interactive.add_trace(
@@ -523,33 +576,55 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                     line=dict(color=MIC_SMOOTH_COLOR, width=2),
                     opacity=MIC_SMOOTH_ALPHA,
                     hovertemplate="<b>SMOOTHED</b><br>Time: %{x|%H:%M:%S}<br>Amplitude: %{y:.0f}<extra></extra>",
-                )
+                ),
+                row=1,
+                col=1,
             )
 
+            # Row 2: RAW only
+            fig_interactive.add_trace(
+                go.Scatter(
+                    x=t_real_arch,
+                    y=list(archive_mic_amp_raw),
+                    name="Mic amplitude RAW (Row 2)",
+                    mode="lines",
+                    line=dict(color="green", width=1.5),
+                    hovertemplate="<b>RAW</b><br>Time: %{x|%H:%M:%S}<br>Amplitude: %{y:.0f}<extra></extra>",
+                    showlegend=False,
+                ),
+                row=2,
+                col=1,
+            )
+
+            # Add tip lines to both subplots
             for tip_ts in archive_tip_times:
                 tip_datetime = datetime.fromtimestamp(tip_ts)
                 fig_interactive.add_vline(
                     x=tip_datetime,
-                    line_dash="solid",
-                    line_color=TIP_LINE_COLOR,
-                    opacity=TIP_LINE_ALPHA,
-                    line_width=TIP_LINE_WIDTH,
+                    line_dash="dash",
+                    line_color="red",
+                    opacity=0.3,
                 )
 
             fig_interactive.update_layout(
-                title="Mic Amplitude (RAW vs SMOOTHED) - Full Session - Interactive",
-                xaxis_title="Time",
-                yaxis_title="Mic Amplitude",
+                title=f"Mic Amplitude - Full Session - Interactive (Total Tips: {total_tips})",
                 hovermode="x unified",
                 template="plotly_white",
-                height=700,
+                height=1000,
                 showlegend=True,
-                legend=dict(x=1.0, y=1.0, xanchor="right", yanchor="top"),
-                xaxis=dict(
-                    tickformat="%H:%M:%S",
-                    tickmode="auto",
-                ),
             )
+
+            # Update x-axes
+            fig_interactive.update_xaxes(
+                title_text="Time", tickformat="%H:%M:%S", tickmode="auto", row=1, col=1
+            )
+            fig_interactive.update_xaxes(
+                title_text="Time", tickformat="%H:%M:%S", tickmode="auto", row=2, col=1
+            )
+
+            # Update y-axes
+            fig_interactive.update_yaxes(title_text="Mic Amplitude", row=1, col=1)
+            fig_interactive.update_yaxes(title_text="Mic Amplitude", row=2, col=1)
 
             fig_interactive.write_html(OUTPUT_HTML)
             print(f"Interactive plot saved to {OUTPUT_HTML}")
