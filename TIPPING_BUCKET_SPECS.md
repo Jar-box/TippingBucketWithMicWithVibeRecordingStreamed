@@ -5,23 +5,26 @@
 ### Tipping Bucket Rain Gauge
 
 - **Volume per tip**: 7.4 mL
-- **Rain depth per tip**: 0.025 mm
-- **Siphon discharge rate**: 2.7 mL/s
+- **Rain depth per tip**: 0.024 mm
+- **Funnel area**: 314.16 cm²
+- **Funnel discharge rate**: 4.11 mL/s
 
 ## Performance Characteristics
 
 ### Tip Rate Calculations
 
-- **Average time to first tip**: 1.7 s
+- **Average discharge duration**: 54.71 s
+  - Time for siphon to fully discharge collected water
+- **Average time to first tip**: 2.01 s
   - Time from when rain starts pouring into bucket until first tip occurs
   - This represents the accumulation time needed to collect 7.4 mL
-- **Minimum tip interval**: 2.74 s/tip
-  - Calculation: 7.4 mL ÷ 2.7 mL/s = 2.74 s
-- **Maximum tip rate**: 0.365 tip/s
-  - Calculation: 1 ÷ 2.74 s = 0.365 tip/s
-- **Maximum measurable intensity (theoretical)**: 31.5 mm/hr
-  - Calculation: 0.365 tip/s × 0.025 mm/tip × 3600 s/hr = 32.85 mm/hr
-  - OR: (3600 s/hr ÷ 2.74 s/tip) × 0.025 mm/tip = 32.85 mm/hr
+- **Minimum tip interval**: 1.80 s/tip
+  - Calculation: 7.4 mL ÷ 4.11 mL/s = 1.80 s
+- **Maximum tip rate**: 0.556 tip/s
+  - Calculation: 1 ÷ 1.80 s = 0.556 tip/s
+- **Maximum measurable intensity (theoretical)**: 48.04 mm/hr
+  - Calculation: 0.556 tip/s × 0.024 mm/tip × 3600 s/hr = 48.04 mm/hr
+  - OR: (3600 s/hr ÷ 1.80 s/tip) × 0.024 mm/tip = 48.00 mm/hr
 
 ## Important Considerations for Rain Detection
 
@@ -53,8 +56,8 @@ Rain start detection is more straightforward:
 **Timing considerations:**
 
 - Microphone detects rain immediately upon impact
-- First bucket tip occurs ~1.7 seconds after rain starts (accumulation time)
-- This 1.7 second gap justifies using mic for early rain start detection
+- First bucket tip occurs ~2.01 seconds after rain starts (accumulation time)
+- This ~2 second gap justifies using mic for early rain start detection
 
 ## Sensor Specifications
 
@@ -80,15 +83,16 @@ Rain start detection is more straightforward:
 
 ## System Limitations
 
-1. **Maximum intensity**: 31.5 mm/hr (above this, bucket cannot drain fast enough)
-2. **Minimum detectable rain**: Single raindrop (via mic), 0.025 mm (via tip)
-3. **Timing resolution**: Limited by siphon discharge rate (2.74s minimum interval)
-4. **End detection delay**: 30-60 seconds due to siphon drainage
+1. **Maximum intensity**: 48.04 mm/hr (above this, bucket cannot drain fast enough)
+2. **Minimum detectable rain**: Single raindrop (via mic), 0.024 mm (via tip)
+3. **Timing resolution**: Limited by siphon discharge rate (1.80s minimum interval)
+4. **End detection delay**: 30-60 seconds due to siphon drainage (average discharge duration: 54.71s)
 
 ## Calibration Notes
 
 - **Bucket volume**: Verify 7.4 mL per tip through water volume testing
-- **Siphon rate**: Measured at 2.7 mL/s under standard conditions
+- **Siphon rate**: Measured at 4.11 mL/s under standard conditions
+- **Discharge duration**: Average 54.71 seconds for complete drainage
 - **Mic baseline**: Varies with ambient noise; requires dynamic baseline tracking
 - **Tip validation**: Reed switch bounce filtering in Arduino code (already implemented)
 
