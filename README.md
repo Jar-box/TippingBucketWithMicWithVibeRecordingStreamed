@@ -61,3 +61,9 @@ data/
 ## TODO
 
 - [ ] Apply MP3 recording feature from serial_optimized.py to multicast.py and multicast_optimized.py
+
+rms
+
+rain rate
+
+rainfall accumulation

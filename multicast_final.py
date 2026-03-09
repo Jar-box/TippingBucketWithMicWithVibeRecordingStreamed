@@ -2,12 +2,14 @@ import socket
 import struct
 
 import csv
+import json
 import math
 import os
 import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
+import numpy as np
 
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -30,11 +32,20 @@ def compute_trend_line(data: list, window: int = 20) -> list:
 
 # ======== CONFIG ========
 WINDOW_SECONDS = 30
-TIP_MM_PER_TIP = 100
 RESET_INTERVAL = 60
 MIC_DB_REF = 1.0
 MIC_SUPPRESSION_SECONDS = 0.35
 SMOOTHING_FACTOR = 0.01
+
+# === RAIN RATE CONFIGURATION ===
+TIP_MM_PER_TIP = 0.0335  # mm per tip (from TIPPING_BUCKET_SPECS.md)
+VALID_TIP_INTERVAL_MIN_S = (
+    2.52  # minimum physically valid tip interval (hardware limit)
+)
+SATURATION_THRESHOLD_MM_HR = 47.5  # near hardware max 47.9 mm/hr
+
+# === CALIBRATION COEFFICIENT FILE ===
+CALIB_COEFF_FILE = Path("data") / "calibration_coefficients.json"
 
 # === PERFORMANCE OPTIMIZATIONS ===
 UPDATE_EVERY_N_SAMPLES = 50  # Update plot less frequently for smoother rendering
@@ -119,6 +130,36 @@ mic_amp_suppressed_raw = 0.0
 final_tip_count = 0
 final_first_tip_count = 0
 
+# === INTERVAL RMS STATE ===
+interval_sample_buffer = []  # Buffer to collect raw sound_amp samples between tips
+interval_rms = 0.0  # RMS computed at each tip boundary
+
+# === CALIBRATION STATE ===
+calibration_pairs = []  # List of (rms, intensity_mm_hr, timestamp, quality_flag) tuples
+MIN_PAIRS_FOR_FIT = 5  # Minimum valid pairs before trusting calibration
+
+# Load previous calibration coefficients if available
+calib_A = 0.01  # Default slope (rough linear approximation)
+calib_B = 0.0  # Default intercept
+calib_loaded = False
+
+if CALIB_COEFF_FILE.exists():
+    try:
+        with open(CALIB_COEFF_FILE, "r") as cf:
+            calib_data = json.load(cf)
+            calib_A = calib_data.get("A", 0.01)
+            calib_B = calib_data.get("B", 0.0)
+            calib_loaded = True
+            print(
+                f"[CALIBRATION] Loaded A={calib_A:.6f}, B={calib_B:.3f} from {CALIB_COEFF_FILE}"
+            )
+    except Exception as e:
+        print(f"[CALIBRATION] Warning: Failed to load coefficients: {e}")
+else:
+    print(
+        f"[CALIBRATION] No existing calibration file. Using defaults: A={calib_A}, B={calib_B}"
+    )
+
 
 def exponential_smooth(
     current_value: float, smoothed_value: float, alpha: float = SMOOTHING_FACTOR
@@ -157,6 +198,16 @@ with open(OUTPUT_CSV, "w", newline="") as f:
             "bucket_rate_mm_hr",
             "mic_db_unfiltered",
             "mic_db_filtered",
+            "tip_interval_s",
+            "tip_valid",
+            "bucket_intensity_mm_hr",
+            "saturation_flag",
+            "interval_rms",
+            "calib_pair_used",
+            "pair_quality_reason",
+            "intensity_mic_mm_hr",
+            "intensity_fused_mm_hr",
+            "intensity_mode",
         ]
     )
 
@@ -297,14 +348,138 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                         f"[{elapsed_s:.1f}s] amp={sound_amp}, tips={tip_count}, tips_since_start={tips_since_start}, delta_tips={tips_since_reset}, dt={last_tip_dt_ms}ms"
                     )
 
+                # Calculate bucket intensity from tip interval
+                tip_interval_s = 0.0
+                tip_valid = False
+                bucket_intensity_mm_hr = 0.0
+                saturation_flag = False
+                calib_pair_used = False
+                pair_quality_reason = ""
+
                 if tip_count > previous_tip_count:
-                    bucket_rate = 40000.0
+                    # New tip detected
+
+                    # Compute interval RMS from samples collected since last tip
+                    if len(interval_sample_buffer) > 0:
+                        # RMS = sqrt(mean(x^2))
+                        try:
+                            sum_squares = sum(s * s for s in interval_sample_buffer)
+                            mean_square = sum_squares / len(interval_sample_buffer)
+                            interval_rms = (
+                                math.sqrt(mean_square) if mean_square >= 0 else 0.0
+                            )
+                            # Clamp to reasonable range (0-1023 ADC range)
+                            interval_rms = max(0.0, min(interval_rms, 1023.0))
+                            # Check for NaN/inf
+                            if not math.isfinite(interval_rms):
+                                interval_rms = 0.0
+                        except (ValueError, ZeroDivisionError):
+                            interval_rms = 0.0
+                    else:
+                        interval_rms = 0.0
+
+                    if last_tip_dt_ms > 0:
+                        tip_interval_s = last_tip_dt_ms / 1000.0
+
+                        # Validate tip interval against physical minimum
+                        if tip_interval_s >= VALID_TIP_INTERVAL_MIN_S:
+                            tip_valid = True
+                            # Calculate intensity: (mm/tip) / (s/tip) * (3600 s/hr)
+                            try:
+                                bucket_intensity_mm_hr = (
+                                    TIP_MM_PER_TIP / tip_interval_s
+                                ) * 3600.0
+                                # Clamp to reasonable range and check for NaN/inf
+                                bucket_intensity_mm_hr = max(
+                                    0.0, bucket_intensity_mm_hr
+                                )
+                                if not math.isfinite(bucket_intensity_mm_hr):
+                                    bucket_intensity_mm_hr = 0.0
+                                    tip_valid = False
+                            except (ValueError, ZeroDivisionError):
+                                bucket_intensity_mm_hr = 0.0
+                                tip_valid = False
+
+                            # Check for saturation
+                            if bucket_intensity_mm_hr >= SATURATION_THRESHOLD_MM_HR:
+                                saturation_flag = True
+
+                            # Store calibration pair if valid and we have samples
+                            if interval_rms > 0 and len(interval_sample_buffer) >= 5:
+                                calibration_pairs.append(
+                                    (
+                                        interval_rms,
+                                        bucket_intensity_mm_hr,
+                                        now_ts,
+                                        "valid",
+                                    )
+                                )
+                                calib_pair_used = True
+                                pair_quality_reason = "valid"
+                            elif len(interval_sample_buffer) < 5:
+                                pair_quality_reason = "too_few_samples"
+                            else:
+                                pair_quality_reason = "zero_rms"
+                        else:
+                            # Interval too short - likely bounce or physically impossible
+                            tip_valid = False
+                            bucket_intensity_mm_hr = 0.0
+                            pair_quality_reason = "interval_too_short"
+                    else:
+                        pair_quality_reason = "no_last_tip_dt"
+
+                    # Clear interval buffer for next tip period
+                    interval_sample_buffer = []
+
                     previous_tip_count = tip_count
                     mic_suppressed_until = now_ts + MIC_SUPPRESSION_SECONDS
                     tip_times.append(now_ts)
                     archive_tip_times.append(now_ts)
+
+                # Collect current sample in interval buffer for next RMS calculation
+                interval_sample_buffer.append(sound_amp)
+
+                # Legacy bucket_rate field (keep for backward compatibility)
+                bucket_rate = bucket_intensity_mm_hr if tip_valid else 0.0
+
+                # === PHASE 3: INTENSITY OUTPUT CHANNELS ===
+                # Compute mic-based intensity estimate (using interval RMS from most recent tip)
+                intensity_mic_mm_hr = 0.0
+                if interval_rms > 0:
+                    # Apply calibration model: I = A * RMS + B
+                    try:
+                        intensity_mic_mm_hr = calib_A * interval_rms + calib_B
+                        # Clamp to non-negative and check for NaN/inf
+                        intensity_mic_mm_hr = max(0.0, intensity_mic_mm_hr)
+                        if not math.isfinite(intensity_mic_mm_hr):
+                            intensity_mic_mm_hr = 0.0
+                    except (ValueError, TypeError):
+                        intensity_mic_mm_hr = 0.0
+
+                # Determine output mode (staged rollout: mostly BUCKET for now)
+                intensity_mode = "UNCALIBRATED"
+                intensity_fused_mm_hr = 0.0
+
+                if not calib_loaded and len(calibration_pairs) < MIN_PAIRS_FOR_FIT:
+                    # Not yet calibrated
+                    intensity_mode = "UNCALIBRATED"
+                    intensity_fused_mm_hr = bucket_intensity_mm_hr
+                elif saturation_flag and intensity_mic_mm_hr > 0:
+                    # Bucket saturated, use mic if available
+                    intensity_mode = "MIC"
+                    intensity_fused_mm_hr = intensity_mic_mm_hr
+                elif tip_valid:
+                    # Normal range, trust bucket
+                    intensity_mode = "BUCKET"
+                    intensity_fused_mm_hr = bucket_intensity_mm_hr
+                elif intensity_mic_mm_hr > 0:
+                    # No valid tip but mic has data (light rain case)
+                    intensity_mode = "MIC"
+                    intensity_fused_mm_hr = intensity_mic_mm_hr
                 else:
-                    bucket_rate = 0.0
+                    # No data
+                    intensity_mode = "UNCALIBRATED"
+                    intensity_fused_mm_hr = 0.0
 
                 mic_rate_unfiltered = 20.0 * math.log10(max(sound_amp, 1) / MIC_DB_REF)
                 mic_amp_unfiltered = sound_amp
@@ -368,6 +543,16 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                         bucket_rate,
                         mic_rate_unfiltered,
                         mic_rate_filtered,
+                        tip_interval_s,
+                        tip_valid,
+                        bucket_intensity_mm_hr,
+                        saturation_flag,
+                        interval_rms,
+                        calib_pair_used,
+                        pair_quality_reason,
+                        intensity_mic_mm_hr,
+                        intensity_fused_mm_hr,
+                        intensity_mode,
                     ]
                 )
                 if sample_counter % 100 == 0:
@@ -650,8 +835,8 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                     line_color=TIP_LINE_COLOR,
                     opacity=TIP_LINE_ALPHA,
                     line_width=TIP_LINE_WIDTH,
-                    row="1",
-                    col="1",
+                    row=1,
+                    col=1,
                 )
                 fig_interactive.add_vline(
                     x=tip_datetime,
@@ -659,8 +844,8 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                     line_color=TIP_LINE_COLOR,
                     opacity=TIP_LINE_ALPHA,
                     line_width=TIP_LINE_WIDTH,
-                    row="2",
-                    col="1",
+                    row=2,
+                    col=1,
                 )
 
             fig_interactive.update_layout(
@@ -685,6 +870,76 @@ with open(OUTPUT_CSV, "w", newline="") as f:
 
             fig_interactive.write_html(OUTPUT_HTML)
             print(f"Interactive plot saved to {OUTPUT_HTML}")
+
+        # === PHASE 3: FIT CALIBRATION COEFFICIENTS ===
+        if len(calibration_pairs) >= MIN_PAIRS_FOR_FIT:
+            print(f"\n{'='*60}")
+            print(f"CALIBRATION FIT SUMMARY")
+            print(f"{'='*60}")
+            print(f"Total valid calibration pairs collected: {len(calibration_pairs)}")
+
+            # Extract RMS and intensity arrays
+            rms_values = np.array([pair[0] for pair in calibration_pairs])
+            intensity_values = np.array([pair[1] for pair in calibration_pairs])
+
+            # Perform least-squares linear regression: intensity = A * rms + B
+            # Using numpy polyfit (degree 1 for linear)
+            coeffs = np.polyfit(rms_values, intensity_values, 1)
+            new_A = coeffs[0]  # slope
+            new_B = coeffs[1]  # intercept
+
+            # Calculate fit quality metrics
+            predicted = new_A * rms_values + new_B
+            residuals = intensity_values - predicted
+            ss_res = np.sum(residuals**2)
+            ss_tot = np.sum((intensity_values - np.mean(intensity_values)) ** 2)
+            r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+            rmse = np.sqrt(np.mean(residuals**2))
+
+            print(f"\nFitted coefficients:")
+            print(f"  A (slope):     {new_A:.6f}")
+            print(f"  B (intercept): {new_B:.3f}")
+            print(f"\nFit quality:")
+            print(f"  R² score:      {r_squared:.4f}")
+            print(f"  RMSE:          {rmse:.3f} mm/hr")
+            print(f"  RMS range:     [{rms_values.min():.1f}, {rms_values.max():.1f}]")
+            print(
+                f"  Intensity range: [{intensity_values.min():.2f}, {intensity_values.max():.2f}] mm/hr"
+            )
+
+            # Save coefficients to file
+            try:
+                CALIB_COEFF_FILE.parent.mkdir(parents=True, exist_ok=True)
+                with open(CALIB_COEFF_FILE, "w") as cf:
+                    json.dump(
+                        {
+                            "A": float(new_A),
+                            "B": float(new_B),
+                            "r_squared": float(r_squared),
+                            "rmse": float(rmse),
+                            "sample_count": len(calibration_pairs),
+                            "rms_min": float(rms_values.min()),
+                            "rms_max": float(rms_values.max()),
+                            "intensity_min": float(intensity_values.min()),
+                            "intensity_max": float(intensity_values.max()),
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                        cf,
+                        indent=2,
+                    )
+                print(f"\nCalibration coefficients saved to {CALIB_COEFF_FILE}")
+            except Exception as e:
+                print(f"\nWarning: Failed to save calibration coefficients: {e}")
+
+            print(f"{'='*60}\n")
+        else:
+            print(
+                f"\n[CALIBRATION] Only {len(calibration_pairs)} valid pairs collected."
+            )
+            print(
+                f"[CALIBRATION] Need at least {MIN_PAIRS_FOR_FIT} pairs for reliable fitting."
+            )
+            print(f"[CALIBRATION] Coefficients NOT updated.\n")
 
         print(f"\nDone! CSV saved to {OUTPUT_CSV}")
         print(f"Static plot saved to {OUTPUT_PNG}")
