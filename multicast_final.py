@@ -115,14 +115,21 @@ archive_mic_amp_raw = deque()
 archive_mic_amp_filtered = deque()
 archive_tip_times = deque()
 
+# Archive deques for intensity data
+archive_bucket_intensity = deque()
+archive_mic_intensity = deque()
+archive_fused_intensity = deque()
+archive_intensity_mode = deque()
+archive_saturation_flag = deque()
+archive_rms = deque()
+archive_tip_valid = deque()
+
 last_reset_time = 0
 tip_count_at_reset = 0
 mic_amp_sum_at_reset = 0
 sample_count_since_reset = 0
 previous_tip_count = 0
 mic_suppressed_until = 0.0
-mic_history = deque(maxlen=10)
-mic_amp_history = deque(maxlen=10)
 sample_counter = 0
 smoothed_mic_amp = 0.0
 smoothed_mic_db = 0.0
@@ -486,35 +493,23 @@ with open(OUTPUT_CSV, "w", newline="") as f:
 
                 if sample_counter == 0:
                     smoothed_mic_amp = mic_amp_unfiltered
+                    smoothed_mic_db = mic_rate_unfiltered
                 else:
                     smoothed_mic_amp = exponential_smooth(
                         mic_amp_unfiltered, smoothed_mic_amp, SMOOTHING_FACTOR
                     )
-                smoothed_mic_db = exponential_smooth(
-                    mic_rate_unfiltered, smoothed_mic_db, SMOOTHING_FACTOR
-                )
+                    smoothed_mic_db = exponential_smooth(
+                        mic_rate_unfiltered, smoothed_mic_db, SMOOTHING_FACTOR
+                    )
 
                 if now_ts < mic_suppressed_until:
                     mic_amp_suppressed_raw = smoothed_mic_amp
                 else:
                     mic_amp_suppressed_raw = mic_amp_unfiltered
 
-                if now_ts < mic_suppressed_until:
-                    if len(mic_amp_history) > 0:
-                        mic_amp_filtered = sum(mic_amp_history) / len(mic_amp_history)
-                    else:
-                        mic_amp_filtered = smoothed_mic_amp
-
-                    if len(mic_history) > 0:
-                        mic_rate_filtered = sum(mic_history) / len(mic_history)
-                    else:
-                        mic_rate_filtered = smoothed_mic_db
-                else:
-                    mic_amp_filtered = smoothed_mic_amp
-                    mic_rate_filtered = smoothed_mic_db
-
-                mic_history.append(mic_rate_filtered)
-                mic_amp_history.append(mic_amp_filtered)
+                # Keep filtered channels as pure EMA outputs, independent of tip events.
+                mic_amp_filtered = smoothed_mic_amp
+                mic_rate_filtered = smoothed_mic_db
 
                 series_t.append(now_ts)
                 series_bucket.append(bucket_rate)
@@ -530,6 +525,15 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 archive_mic_filtered.append(mic_rate_filtered)
                 archive_mic_amp_raw.append(mic_amp_suppressed_raw)
                 archive_mic_amp_filtered.append(mic_amp_filtered)
+
+                # Archive intensity data
+                archive_bucket_intensity.append(bucket_intensity_mm_hr)
+                archive_mic_intensity.append(intensity_mic_mm_hr)
+                archive_fused_intensity.append(intensity_fused_mm_hr)
+                archive_intensity_mode.append(intensity_mode)
+                archive_saturation_flag.append(saturation_flag)
+                archive_rms.append(interval_rms)
+                archive_tip_valid.append(tip_valid)
 
                 writer.writerow(
                     [
@@ -669,14 +673,94 @@ with open(OUTPUT_CSV, "w", newline="") as f:
 
         if archive_t:
             print("Generating final plot...")
-            fig_archive, ax_amp_left_arch = plt.subplots(1, 1, figsize=(14, 7))
+            fig_archive, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
             t0_arch = archive_t[0]
             t_rel_arch = [t - t0_arch for t in archive_t]
 
             t_real_arch = [datetime.fromtimestamp(t) for t in archive_t]
             t_numeric_arch = mdates.date2num(t_real_arch)
 
-            ax_amp_left_arch.plot(
+            # ===== SUBPLOT 1: Rainfall Intensity (mm/hr) =====
+            ax_intensity = axes[0]
+
+            # Plot intensity traces
+            ax_intensity.plot(
+                t_numeric_arch,
+                list(archive_fused_intensity),
+                label="Fused Intensity",
+                color="#2E86AB",
+                linewidth=2.5,
+            )
+            ax_intensity.plot(
+                t_numeric_arch,
+                list(archive_bucket_intensity),
+                label="Bucket Intensity",
+                color="#06A77D",
+                linewidth=1.5,
+                linestyle="--",
+                alpha=0.8,
+            )
+            ax_intensity.plot(
+                t_numeric_arch,
+                list(archive_mic_intensity),
+                label="Mic Intensity",
+                color="#D62246",
+                linewidth=1.5,
+                linestyle=":",
+                alpha=0.8,
+            )
+
+            # Add saturation threshold line
+            ax_intensity.axhline(
+                y=SATURATION_THRESHOLD_MM_HR,
+                color="orange",
+                linestyle="--",
+                linewidth=1.5,
+                alpha=0.7,
+                label=f"Saturation Threshold ({SATURATION_THRESHOLD_MM_HR} mm/hr)",
+            )
+
+            # Color background by mode
+            for i in range(len(t_numeric_arch) - 1):
+                mode = archive_intensity_mode[i]
+                if mode == "BUCKET":
+                    color = "#90EE90"  # light green
+                elif mode == "MIC":
+                    color = "#ADD8E6"  # light blue
+                else:  # UNCALIBRATED
+                    color = "#D3D3D3"  # light gray
+                ax_intensity.axvspan(
+                    t_numeric_arch[i],
+                    t_numeric_arch[i + 1],
+                    facecolor=color,
+                    alpha=0.15,
+                    linewidth=0,
+                )
+
+            ax_intensity.set_title(
+                "Rainfall Intensity - Full Session",
+                fontsize=14,
+                fontweight="bold",
+            )
+            ax_intensity.set_ylabel("Intensity (mm/hr)", fontsize=12)
+            ax_intensity.legend(loc="upper right", framealpha=0.95, fontsize=10)
+            ax_intensity.grid(True, alpha=0.3)
+
+            # ===== SUBPLOT 2: RMS & Mic Amplitude =====
+            ax_rms = axes[1]
+            ax_amp = ax_rms.twinx()
+
+            # Plot RMS on left y-axis
+            line1 = ax_rms.plot(
+                t_numeric_arch,
+                list(archive_rms),
+                label="Interval RMS",
+                color="#FF6B35",
+                linewidth=2,
+            )
+
+            # Plot amplitude on right y-axis
+            line2 = ax_amp.plot(
                 t_numeric_arch,
                 list(archive_mic_amp_raw),
                 label="Mic amplitude RAW",
@@ -684,7 +768,7 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 alpha=MIC_RAW_ALPHA,
                 linewidth=1.5,
             )
-            ax_amp_left_arch.plot(
+            line3 = ax_amp.plot(
                 t_numeric_arch,
                 list(archive_mic_amp_filtered),
                 label="Mic amplitude SMOOTHED",
@@ -693,50 +777,102 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 linewidth=2,
             )
 
-            # Add a dummy line for tipping events in the legend
-            ax_amp_left_arch.plot(
-                [],
-                [],
-                label="Tipping Events",
-                color=TIP_LINE_COLOR,
-                alpha=TIP_LINE_ALPHA,
-                linewidth=TIP_LINE_WIDTH,
-                linestyle=TIP_LINE_STYLE,
+            ax_rms.set_ylabel("Interval RMS", fontsize=12, color="#FF6B35")
+            ax_amp.set_ylabel("Mic amplitude", fontsize=12)
+            ax_rms.tick_params(axis="y", labelcolor="#FF6B35")
+
+            # Combine legends
+            lines = line1 + line2 + line3
+            labels = [l.get_label() for l in lines]
+            ax_rms.legend(
+                lines, labels, loc="upper right", framealpha=0.95, fontsize=10
             )
+            ax_rms.grid(True, alpha=0.3)
 
-            ax_amp_left_arch.set_title(
-                "Mic Amplitude (RAW vs SMOOTHED) - Full Session",
-                fontsize=14,
-                fontweight="bold",
+            # ===== SUBPLOT 3: Operational Mode & Status =====
+            ax_mode = axes[2]
+
+            # Convert mode strings to numeric values for plotting
+            mode_numeric = []
+            for mode in archive_intensity_mode:
+                if mode == "UNCALIBRATED":
+                    mode_numeric.append(0)
+                elif mode == "BUCKET":
+                    mode_numeric.append(1)
+                elif mode == "MIC":
+                    mode_numeric.append(2)
+                else:
+                    mode_numeric.append(0)
+
+            ax_mode.plot(
+                t_numeric_arch,
+                mode_numeric,
+                label="Intensity Mode",
+                color="#4A4A4A",
+                linewidth=2,
+                drawstyle="steps-post",
             )
-            ax_amp_left_arch.set_xlabel("Time", fontsize=12)
-            ax_amp_left_arch.set_ylabel("Mic amplitude", fontsize=12)
-            ax_amp_left_arch.legend(loc="upper right", framealpha=0.95, fontsize=11)
-            ax_amp_left_arch.grid(True, alpha=0.3)
+            ax_mode.set_yticks([0, 1, 2])
+            ax_mode.set_yticklabels(["UNCALIBRATED", "BUCKET", "MIC"])
 
-            ax_amp_left_arch.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
-            ax_amp_left_arch.xaxis.set_major_locator(mdates.AutoDateLocator())
-            fig_archive.autofmt_xdate()
-
-            for tip_ts in archive_tip_times:
-                tip_numeric = float(mdates.date2num(datetime.fromtimestamp(tip_ts)))
-                ax_amp_left_arch.axvline(
-                    x=tip_numeric,
-                    color=TIP_LINE_COLOR,
-                    alpha=TIP_LINE_ALPHA,
-                    linewidth=TIP_LINE_WIDTH,
-                    linestyle=TIP_LINE_STYLE,
+            # Overlay saturation flags
+            sat_times = [
+                t_numeric_arch[i]
+                for i, flag in enumerate(archive_saturation_flag)
+                if flag
+            ]
+            sat_values = [2.2 for _ in sat_times]
+            if sat_times:
+                ax_mode.scatter(
+                    sat_times,
+                    sat_values,
+                    color="red",
+                    marker="^",
+                    s=50,
+                    alpha=0.7,
+                    label="Saturation",
+                    zorder=5,
                 )
 
-            y_min_arch, y_max_arch = ax_amp_left_arch.get_ylim()
-            if y_max_arch - y_min_arch < MIN_AMPLITUDE_ZOOM:
-                y_center_arch = (y_max_arch + y_min_arch) / 2
-                y_min_arch = y_center_arch - MIN_AMPLITUDE_ZOOM / 2
-                y_max_arch = y_center_arch + MIN_AMPLITUDE_ZOOM / 2
-                if y_min_arch < 0:
-                    y_min_arch = 0
-                    y_max_arch = MIN_AMPLITUDE_ZOOM
-                ax_amp_left_arch.set_ylim(y_min_arch, y_max_arch)
+            # Overlay tip_valid flags
+            valid_times = [
+                t_numeric_arch[i] for i, flag in enumerate(archive_tip_valid) if flag
+            ]
+            valid_values = [2.4 for _ in valid_times]
+            if valid_times:
+                ax_mode.scatter(
+                    valid_times,
+                    valid_values,
+                    color="blue",
+                    marker="o",
+                    s=30,
+                    alpha=0.5,
+                    label="Valid Tip",
+                    zorder=5,
+                )
+
+            ax_mode.set_ylabel("Mode / Status", fontsize=12)
+            ax_mode.set_xlabel("Time", fontsize=12)
+            ax_mode.legend(loc="upper right", framealpha=0.95, fontsize=10)
+            ax_mode.grid(True, alpha=0.3)
+            ax_mode.set_ylim(-0.5, 2.8)
+
+            # ===== Add tipping event lines to all subplots =====
+            for tip_ts in archive_tip_times:
+                tip_numeric = float(mdates.date2num(datetime.fromtimestamp(tip_ts)))
+                for ax in axes:
+                    ax.axvline(
+                        x=tip_numeric,
+                        color=TIP_LINE_COLOR,
+                        alpha=TIP_LINE_ALPHA,
+                        linewidth=TIP_LINE_WIDTH,
+                        linestyle=TIP_LINE_STYLE,
+                    )
+
+            # ===== Format x-axis for all subplots =====
+            axes[2].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
+            axes[2].xaxis.set_major_locator(mdates.AutoDateLocator())
+            fig_archive.autofmt_xdate()
 
             fig_archive.tight_layout()
             fig_archive.savefig(OUTPUT_PNG, dpi=100, bbox_inches="tight")
@@ -757,17 +893,124 @@ with open(OUTPUT_CSV, "w", newline="") as f:
 
             total_tips = len(archive_tip_times)
             fig_interactive = make_subplots(
-                rows=2,
+                rows=3,
                 cols=1,
                 subplot_titles=(
-                    "Mic Amplitude (RAW + SMOOTHED)",
-                    "Mic Amplitude (RAW only)",
+                    "Rainfall Intensity (mm/hr)",
+                    "RMS & Mic Amplitude",
+                    "Operational Mode & Status",
                 ),
                 shared_xaxes=True,
-                vertical_spacing=0.12,
+                vertical_spacing=0.08,
+                specs=[
+                    [{"secondary_y": False}],
+                    [{"secondary_y": True}],
+                    [{"secondary_y": False}],
+                ],
             )
 
-            # Row 1: RAW + SMOOTHED
+            # ===== ROW 1: Rainfall Intensity =====
+            fig_interactive.add_trace(
+                go.Scatter(
+                    x=t_real_arch,
+                    y=list(archive_fused_intensity),
+                    name="Fused Intensity",
+                    mode="lines",
+                    line=dict(color="#2E86AB", width=2.5),
+                    hovertemplate="<b>Fused</b><br>Time: %{x|%H:%M:%S}<br>Intensity: %{y:.2f} mm/hr<extra></extra>",
+                ),
+                row=1,
+                col=1,
+            )
+
+            fig_interactive.add_trace(
+                go.Scatter(
+                    x=t_real_arch,
+                    y=list(archive_bucket_intensity),
+                    name="Bucket Intensity",
+                    mode="lines",
+                    line=dict(color="#06A77D", width=1.5, dash="dash"),
+                    opacity=0.8,
+                    hovertemplate="<b>Bucket</b><br>Time: %{x|%H:%M:%S}<br>Intensity: %{y:.2f} mm/hr<extra></extra>",
+                ),
+                row=1,
+                col=1,
+            )
+
+            fig_interactive.add_trace(
+                go.Scatter(
+                    x=t_real_arch,
+                    y=list(archive_mic_intensity),
+                    name="Mic Intensity",
+                    mode="lines",
+                    line=dict(color="#D62246", width=1.5, dash="dot"),
+                    opacity=0.8,
+                    hovertemplate="<b>Mic</b><br>Time: %{x|%H:%M:%S}<br>Intensity: %{y:.2f} mm/hr<extra></extra>",
+                ),
+                row=1,
+                col=1,
+            )
+
+            # Add saturation threshold line
+            fig_interactive.add_hline(
+                y=SATURATION_THRESHOLD_MM_HR,
+                line_dash="dash",
+                line_color="orange",
+                opacity=0.7,
+                annotation_text=f"Saturation ({SATURATION_THRESHOLD_MM_HR} mm/hr)",
+                annotation_position="right",
+                row=1,
+                col=1,
+            )
+
+            # Add mode background coloring
+            i = 0
+            while i < len(t_real_arch):
+                start_idx = i
+                current_mode = archive_intensity_mode[i]
+
+                # Find end of this mode region
+                while (
+                    i < len(t_real_arch) and archive_intensity_mode[i] == current_mode
+                ):
+                    i += 1
+                end_idx = i - 1
+
+                # Set color based on mode
+                if current_mode == "BUCKET":
+                    color = "rgba(144, 238, 144, 0.15)"  # light green
+                elif current_mode == "MIC":
+                    color = "rgba(173, 216, 230, 0.15)"  # light blue
+                else:  # UNCALIBRATED
+                    color = "rgba(211, 211, 211, 0.15)"  # light gray
+
+                fig_interactive.add_vrect(
+                    x0=t_real_arch[start_idx],
+                    x1=t_real_arch[end_idx],
+                    fillcolor=color,
+                    layer="below",
+                    line_width=0,
+                    row=1,
+                    col=1,
+                )
+
+            # ===== ROW 2: RMS & Mic Amplitude =====
+            # RMS on primary y-axis
+            fig_interactive.add_trace(
+                go.Scatter(
+                    x=t_real_arch,
+                    y=list(archive_rms),
+                    name="Interval RMS",
+                    mode="lines",
+                    line=dict(color="#FF6B35", width=2),
+                    hovertemplate="<b>RMS</b><br>Time: %{x|%H:%M:%S}<br>RMS: %{y:.2f}<extra></extra>",
+                ),
+                row=2,
+                col=1,
+                secondary_y=False,
+            )
+
+            # Mic amplitude on secondary y-axis
             fig_interactive.add_trace(
                 go.Scatter(
                     x=t_real_arch,
@@ -778,8 +1021,9 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                     opacity=MIC_RAW_ALPHA,
                     hovertemplate="<b>RAW</b><br>Time: %{x|%H:%M:%S}<br>Amplitude: %{y:.0f}<extra></extra>",
                 ),
-                row=1,
+                row=2,
                 col=1,
+                secondary_y=True,
             )
 
             fig_interactive.add_trace(
@@ -792,67 +1036,97 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                     opacity=MIC_SMOOTH_ALPHA,
                     hovertemplate="<b>SMOOTHED</b><br>Time: %{x|%H:%M:%S}<br>Amplitude: %{y:.0f}<extra></extra>",
                 ),
-                row=1,
+                row=2,
                 col=1,
+                secondary_y=True,
             )
 
-            # Add a dummy trace for tipping events in the legend
-            fig_interactive.add_trace(
-                go.Scatter(
-                    x=[None],
-                    y=[None],
-                    name="Tipping Events",
-                    mode="lines",
-                    line=dict(color=TIP_LINE_COLOR, width=TIP_LINE_WIDTH, dash="dash"),
-                    opacity=TIP_LINE_ALPHA,
-                    showlegend=True,
-                ),
-                row=1,
-                col=1,
-            )
+            # ===== ROW 3: Operational Mode & Status =====
+            # Convert mode strings to numeric for plotting
+            mode_numeric = []
+            for mode in archive_intensity_mode:
+                if mode == "UNCALIBRATED":
+                    mode_numeric.append(0)
+                elif mode == "BUCKET":
+                    mode_numeric.append(1)
+                elif mode == "MIC":
+                    mode_numeric.append(2)
+                else:
+                    mode_numeric.append(0)
 
-            # Row 2: RAW only
             fig_interactive.add_trace(
                 go.Scatter(
                     x=t_real_arch,
-                    y=list(archive_mic_amp_raw),
-                    name="Mic amplitude RAW (Row 2)",
+                    y=mode_numeric,
+                    name="Intensity Mode",
                     mode="lines",
-                    line=dict(color=MIC_RAW_COLOR, width=1.5),
-                    opacity=MIC_RAW_ALPHA,
-                    hovertemplate="<b>RAW</b><br>Time: %{x|%H:%M:%S}<br>Amplitude: %{y:.0f}<extra></extra>",
-                    showlegend=False,
+                    line=dict(color="#4A4A4A", width=2, shape="hv"),
+                    hovertemplate="<b>Mode</b><br>Time: %{x|%H:%M:%S}<br>Mode: %{y}<extra></extra>",
                 ),
-                row=2,
+                row=3,
                 col=1,
             )
 
-            for tip_ts in archive_tip_times:
-                tip_datetime = datetime.fromtimestamp(tip_ts)
-                fig_interactive.add_vline(
-                    x=tip_datetime,
-                    line_dash="dash",
-                    line_color=TIP_LINE_COLOR,
-                    opacity=TIP_LINE_ALPHA,
-                    line_width=TIP_LINE_WIDTH,
-                    row=1,
-                    col=1,
-                )
-                fig_interactive.add_vline(
-                    x=tip_datetime,
-                    line_dash="dash",
-                    line_color=TIP_LINE_COLOR,
-                    opacity=TIP_LINE_ALPHA,
-                    line_width=TIP_LINE_WIDTH,
-                    row=2,
+            # Add saturation flags
+            sat_times = [
+                t_real_arch[i] for i, flag in enumerate(archive_saturation_flag) if flag
+            ]
+            sat_values = [2.2 for _ in sat_times]
+            if sat_times:
+                fig_interactive.add_trace(
+                    go.Scatter(
+                        x=sat_times,
+                        y=sat_values,
+                        name="Saturation",
+                        mode="markers",
+                        marker=dict(color="red", symbol="triangle-up", size=8),
+                        opacity=0.7,
+                        hovertemplate="<b>Saturation Event</b><br>Time: %{x|%H:%M:%S}<extra></extra>",
+                    ),
+                    row=3,
                     col=1,
                 )
 
+            # Add valid tip flags
+            valid_times = [
+                t_real_arch[i] for i, flag in enumerate(archive_tip_valid) if flag
+            ]
+            valid_values = [2.4 for _ in valid_times]
+            if valid_times:
+                fig_interactive.add_trace(
+                    go.Scatter(
+                        x=valid_times,
+                        y=valid_values,
+                        name="Valid Tip",
+                        mode="markers",
+                        marker=dict(color="blue", symbol="circle", size=6),
+                        opacity=0.5,
+                        hovertemplate="<b>Valid Tip</b><br>Time: %{x|%H:%M:%S}<extra></extra>",
+                    ),
+                    row=3,
+                    col=1,
+                )
+
+            # ===== Add tipping event lines to all rows =====
+            for tip_ts in archive_tip_times:
+                tip_datetime = datetime.fromtimestamp(tip_ts)
+                for row_num in [1, 2, 3]:
+                    fig_interactive.add_vline(
+                        x=tip_datetime,
+                        line_dash="dash",
+                        line_color=TIP_LINE_COLOR,
+                        opacity=TIP_LINE_ALPHA,
+                        line_width=TIP_LINE_WIDTH,
+                        row=row_num,
+                        col=1,
+                    )
+
+            # ===== Update layout =====
             fig_interactive.update_layout(
-                title=f"Mic Amplitude - Full Session - Interactive (Total Tips: {total_tips})",
+                title=f"Rainfall Intensity & Diagnostics - Full Session - Interactive (Total Tips: {total_tips})",
                 hovermode="x unified",
                 template="plotly_white",
-                height=1000,
+                height=1400,
                 showlegend=True,
             )
 
@@ -863,10 +1137,27 @@ with open(OUTPUT_CSV, "w", newline="") as f:
             fig_interactive.update_xaxes(
                 title_text="Time", tickformat="%H:%M:%S", tickmode="auto", row=2, col=1
             )
+            fig_interactive.update_xaxes(
+                title_text="Time", tickformat="%H:%M:%S", tickmode="auto", row=3, col=1
+            )
 
             # Update y-axes
-            fig_interactive.update_yaxes(title_text="Mic Amplitude", row=1, col=1)
-            fig_interactive.update_yaxes(title_text="Mic Amplitude", row=2, col=1)
+            fig_interactive.update_yaxes(title_text="Intensity (mm/hr)", row=1, col=1)
+            fig_interactive.update_yaxes(
+                title_text="Interval RMS", row=2, col=1, secondary_y=False
+            )
+            fig_interactive.update_yaxes(
+                title_text="Mic Amplitude", row=2, col=1, secondary_y=True
+            )
+            fig_interactive.update_yaxes(
+                title_text="Mode / Status",
+                tickmode="array",
+                tickvals=[0, 1, 2],
+                ticktext=["UNCALIBRATED", "BUCKET", "MIC"],
+                range=[-0.5, 2.8],
+                row=3,
+                col=1,
+            )
 
             fig_interactive.write_html(OUTPUT_HTML)
             print(f"Interactive plot saved to {OUTPUT_HTML}")
