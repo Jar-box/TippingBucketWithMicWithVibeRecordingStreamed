@@ -26,3 +26,5 @@ build/
 # Environment
 .env
 .env.local
+
+data/
