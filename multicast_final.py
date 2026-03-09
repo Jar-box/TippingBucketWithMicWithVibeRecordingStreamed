@@ -37,7 +37,7 @@ MIC_SUPPRESSION_SECONDS = 0.35
 SMOOTHING_FACTOR = 0.01
 
 # === PERFORMANCE OPTIMIZATIONS ===
-UPDATE_EVERY_N_SAMPLES = 25  # Update plot less frequently for smoother rendering
+UPDATE_EVERY_N_SAMPLES = 50  # Update plot less frequently for smoother rendering
 FIGURE_SIZE = (12, 7)
 
 # === ZOOM LIMITS ===
@@ -179,7 +179,7 @@ with open(OUTPUT_CSV, "w", newline="") as f:
         alpha=MIC_SMOOTH_ALPHA,
         linewidth=2,
     )
-    
+
     # Add a dummy line for tipping events in the legend
     ax_amp_left.plot(
         [],
@@ -213,6 +213,7 @@ with open(OUTPUT_CSV, "w", newline="") as f:
     tip_lines_amp_left = []
     is_closed = False
     last_tip_count_drawn = 0
+    last_gui_update = time.time()
 
     def on_close(event):
         global is_closed
@@ -386,6 +387,11 @@ with open(OUTPUT_CSV, "w", newline="") as f:
 
             # Update plot every N samples (not every packet)
             if sample_counter % UPDATE_EVERY_N_SAMPLES != 0:
+                # Even when not updating plot, process GUI events periodically to keep responsive
+                current_time = time.time()
+                if current_time - last_gui_update > 0.1:  # Every 100ms
+                    fig.canvas.flush_events()
+                    last_gui_update = current_time
                 continue
 
             if not series_t:
@@ -453,7 +459,7 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                     ax_amp_left.set_xlim(x_min, x_max)
 
                 fig.canvas.draw_idle()
-                plt.pause(0.001)
+                fig.canvas.flush_events()
             except Exception as e:
                 # Silently continue on rendering errors
                 pass
@@ -501,7 +507,7 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 alpha=MIC_SMOOTH_ALPHA,
                 linewidth=2,
             )
-            
+
             # Add a dummy line for tipping events in the legend
             ax_amp_left_arch.plot(
                 [],
@@ -512,7 +518,7 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 linewidth=TIP_LINE_WIDTH,
                 linestyle=TIP_LINE_STYLE,
             )
-            
+
             ax_amp_left_arch.set_title(
                 "Mic Amplitude (RAW vs SMOOTHED) - Full Session",
                 fontsize=14,
@@ -548,7 +554,7 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                 ax_amp_left_arch.set_ylim(y_min_arch, y_max_arch)
 
             fig_archive.tight_layout()
-            fig_archive.savefig(OUTPUT_PNG, dpi=150, bbox_inches="tight")
+            fig_archive.savefig(OUTPUT_PNG, dpi=100, bbox_inches="tight")
             plt.close(fig_archive)
 
             print("Generating interactive HTML plot...")
@@ -644,8 +650,8 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                     line_color=TIP_LINE_COLOR,
                     opacity=TIP_LINE_ALPHA,
                     line_width=TIP_LINE_WIDTH,
-                    row=1,
-                    col=1,
+                    row="1",
+                    col="1",
                 )
                 fig_interactive.add_vline(
                     x=tip_datetime,
@@ -653,8 +659,8 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                     line_color=TIP_LINE_COLOR,
                     opacity=TIP_LINE_ALPHA,
                     line_width=TIP_LINE_WIDTH,
-                    row=2,
-                    col=1,
+                    row="2",
+                    col="1",
                 )
 
             fig_interactive.update_layout(
