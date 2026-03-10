@@ -48,8 +48,6 @@ SATURATION_THRESHOLD_MM_HR = 47.5  # near hardware max 47.9 mm/hr
 # === CALIBRATION COEFFICIENT FILE ===
 CALIB_COEFF_FILE = Path("data") / "calibration_coefficients.json"
 
-# === PERFORMANCE OPTIMIZATIONS ===
-UPDATE_EVERY_N_SAMPLES = 50  # Update plot less frequently for smoother rendering
 FIGURE_SIZE = (12, 7)
 
 # === ZOOM LIMITS ===
@@ -187,9 +185,8 @@ def prune_old(now_ts: float) -> None:
         tip_times.popleft()
 
 
-print("OPTIMIZED SINGLE-THREADED version")
+print("REALTIME version (no plot throttle)")
 print(f"Socket timeout: {SOCKET_TIMEOUT*1000:.1f}ms (very short, tight loop)")
-print(f"Update frequency: Every {UPDATE_EVERY_N_SAMPLES} samples")
 print()
 
 with open(OUTPUT_CSV, "w", newline="") as f:
@@ -272,7 +269,6 @@ with open(OUTPUT_CSV, "w", newline="") as f:
     tip_lines_amp_left = []
     is_closed = False
     last_tip_count_drawn = 0
-    last_gui_update = time.time()
 
     def on_close(event):
         global is_closed
@@ -583,15 +579,6 @@ with open(OUTPUT_CSV, "w", newline="") as f:
                     )
                     print(f"[{elapsed_total:.1f}s] {samples_per_sec:.1f} samples/sec")
                     last_diagnostics = now_ts
-
-            # Update plot every N samples (not every packet)
-            if sample_counter % UPDATE_EVERY_N_SAMPLES != 0:
-                # Even when not updating plot, process GUI events periodically to keep responsive
-                current_time = time.time()
-                if current_time - last_gui_update > 0.1:  # Every 100ms
-                    fig.canvas.flush_events()
-                    last_gui_update = current_time
-                continue
 
             if not series_t:
                 continue
